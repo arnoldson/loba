@@ -1,70 +1,88 @@
-// Tile system for 3m x 3m grid
-const TILE_SIZE_METERS = 3.0;
-const METERS_PER_DEGREE_LAT = 111320; // Approximately constant
+const TILE_SIZE_METERS = 3;
+const METERS_PER_DEGREE_LAT = 111320;
 
 /**
- * Convert GPS coordinates to a tile ID
+ * Calculate tile ID from coordinates
  */
 export function getTileId(latitude: number, longitude: number): string {
-  // Calculate degrees per tile
-  const latDegreesPerTile = TILE_SIZE_METERS / METERS_PER_DEGREE_LAT;
-  const lngDegreesPerTile =
-    TILE_SIZE_METERS /
-    (METERS_PER_DEGREE_LAT * Math.cos((latitude * Math.PI) / 180));
-
-  // Get tile coordinates
-  const tileLat = Math.floor(latitude / latDegreesPerTile);
-  const tileLng = Math.floor(longitude / lngDegreesPerTile);
-
-  // Return as string ID
-  return `${tileLat}:${tileLng}`;
+  const latTile = Math.floor(latitude * METERS_PER_DEGREE_LAT / TILE_SIZE_METERS);
+  const metersPerDegreeLng = METERS_PER_DEGREE_LAT * Math.cos(latitude * Math.PI / 180);
+  const lngTile = Math.floor(longitude * metersPerDegreeLng / TILE_SIZE_METERS);
+  
+  return `${latTile}:${lngTile}`;
 }
 
 /**
- * Get all tile IDs in an NxN grid around a center point
+ * Get supertile ID by grouping base tiles
+ */
+export function getSupertileId(tile_id: string, groupingFactor: number): string {
+  const [latTile, lngTile] = tile_id.split(':').map(Number);
+  
+  const supertileLat = Math.floor(latTile / groupingFactor);
+  const supertileLng = Math.floor(lngTile / groupingFactor);
+  
+  return `${supertileLat}:${supertileLng}`;
+}
+
+/**
+ * Calculate center coordinates for a supertile
+ */
+export function getSupertileCenter(
+  supertile_id: string,
+  groupingFactor: number
+): { latitude: number; longitude: number } {
+  const [supertileLat, supertileLng] = supertile_id.split(':').map(Number);
+  
+  // Center of supertile
+  const centerLatTile = supertileLat * groupingFactor + groupingFactor / 2;
+  const centerLngTile = supertileLng * groupingFactor + groupingFactor / 2;
+  
+  // Convert to lat/lng
+  const centerLat = centerLatTile * TILE_SIZE_METERS / METERS_PER_DEGREE_LAT;
+  const metersPerDegreeLng = METERS_PER_DEGREE_LAT * Math.cos(centerLat * Math.PI / 180);
+  const centerLng = centerLngTile * TILE_SIZE_METERS / metersPerDegreeLng;
+  
+  return { latitude: centerLat, longitude: centerLng };
+}
+
+/**
+ * Get range of tile IDs around a center point
  */
 export function getTileRange(
-  latitude: number,
-  longitude: number,
-  gridSize: number
+  centerLat: number,
+  centerLng: number,
+  radius: number = 5
 ): string[] {
-  const latDegreesPerTile = TILE_SIZE_METERS / METERS_PER_DEGREE_LAT;
-  const lngDegreesPerTile =
-    TILE_SIZE_METERS /
-    (METERS_PER_DEGREE_LAT * Math.cos((latitude * Math.PI) / 180));
-
-  const centerTileLat = Math.floor(latitude / latDegreesPerTile);
-  const centerTileLng = Math.floor(longitude / lngDegreesPerTile);
-
-  const radius = Math.floor(gridSize / 2);
-  const tiles: string[] = [];
-
-  for (let dLat = -radius; dLat <= radius; dLat++) {
-    for (let dLng = -radius; dLng <= radius; dLng++) {
-      const tileLat = centerTileLat + dLat;
-      const tileLng = centerTileLng + dLng;
-      tiles.push(`${tileLat}:${tileLng}`);
+  const centerTileId = getTileId(centerLat, centerLng);
+  const [centerLatTile, centerLngTile] = centerTileId.split(':').map(Number);
+  
+  const tileIds: string[] = [];
+  
+  for (let latOffset = -radius; latOffset <= radius; latOffset++) {
+    for (let lngOffset = -radius; lngOffset <= radius; lngOffset++) {
+      tileIds.push(`${centerLatTile + latOffset}:${centerLngTile + lngOffset}`);
     }
   }
-
-  return tiles;
+  
+  return tileIds;
 }
 
 /**
- * Get the GPS bounds of a tile (for visualization)
+ * Calculate zoom level from region delta
  */
-export function getTileBounds(tileId: string, latitude: number) {
-  const [tileLat, tileLng] = tileId.split(":").map(Number);
+export function getZoomLevel(latitudeDelta: number): number {
+  return Math.round(Math.log2(360 / latitudeDelta));
+}
 
-  const latDegreesPerTile = TILE_SIZE_METERS / METERS_PER_DEGREE_LAT;
-  const lngDegreesPerTile =
-    TILE_SIZE_METERS /
-    (METERS_PER_DEGREE_LAT * Math.cos((latitude * Math.PI) / 180));
-
-  return {
-    minLat: tileLat * latDegreesPerTile,
-    maxLat: (tileLat + 1) * latDegreesPerTile,
-    minLng: tileLng * lngDegreesPerTile,
-    maxLng: (tileLng + 1) * lngDegreesPerTile,
-  };
+/**
+ * Get grouping factor based on zoom level
+ * Slow progression: doubles every 2 zoom levels
+ */
+export function getGroupingFactor(zoom: number): number | null {
+  if (zoom >= 19) return 1;   // 3m - atomic tiles
+  if (zoom >= 17) return 2;   // 6m - very detailed
+  if (zoom >= 15) return 4;   // 12m - block level
+  if (zoom >= 13) return 8;   // 24m - neighborhood
+  if (zoom >= 11) return 16;  // 48m - district
+  return null;                // Too zoomed out
 }
