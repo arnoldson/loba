@@ -15,7 +15,12 @@ import MapView, { Marker, Region } from "react-native-maps";
 import type { CreatePostRequest, CreatePostResponse, Post } from "@loba/shared";
 import { TileMarker } from "@/components/TileMarker";
 import { TileDetailsModal } from "@/components/TileDetailsModal";
-import { getTileRange, getZoomLevel, getGroupingFactor, getTileId } from "@/utils/tiles";
+import {
+  getTileRange,
+  getZoomLevel,
+  getGroupingFactor,
+  getTileId,
+} from "@/utils/tiles";
 import { groupPostsByZoomLevel, type SuperTile } from "@/utils/postGrouping";
 
 // Backend API URL
@@ -26,18 +31,20 @@ const API_URL = Platform.select({
 });
 
 export default function HomeScreen() {
-  const [location, setLocation] = useState<Location.LocationObject | null>(null);
+  const [location, setLocation] = useState<Location.LocationObject | null>(
+    null
+  );
   const [posts, setPosts] = useState<Post[]>([]);
   const [zoom, setZoom] = useState(18);
   const mapRef = useRef<MapView>(null);
-  const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
+  const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Post creation modal
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [postText, setPostText] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
-  
+
   // Tile details modal
   const [selectedTile, setSelectedTile] = useState<SuperTile | null>(null);
   const [isTileModalVisible, setIsTileModalVisible] = useState(false);
@@ -59,31 +66,26 @@ export default function HomeScreen() {
   // Fetch nearby posts when location is available
   useEffect(() => {
     if (location) {
-      console.log('📍 Your location:', location.coords.latitude, location.coords.longitude);
-      console.log('🔍 Fetching posts in ~33m × 33m area (11×11 tiles of 3m each)');
-      
-      // VISIBLE ALERT - Can't miss this!
-      Alert.alert(
-        'Location Found',
-        `Lat: ${location.coords.latitude.toFixed(4)}\nLng: ${location.coords.longitude.toFixed(4)}\n\nFetching posts...`,
-        [{ text: 'OK' }]
+      console.log(
+        "📍 Your location:",
+        location.coords.latitude,
+        location.coords.longitude
       );
-      
+      console.log("🔍 Fetching posts in 303m radius");
+
       fetchNearbyPosts(location.coords.latitude, location.coords.longitude);
     }
   }, [location]);
 
-  // Fetch nearby posts based on map region (not just GPS location)
+  // Fetch nearby posts based on map region
   const fetchNearbyPosts = async (lat: number, lng: number) => {
     try {
-      // Get tile IDs in MUCH LARGER grid (101×101 tiles = 303m × 303m area)
-      // Changed from radius 5 (33m) to radius 50 (303m) to see more posts
+      // Get tile IDs in 303m × 303m area (101×101 tiles)
       const tileIds = getTileRange(lat, lng, 50);
-      
+
       console.log(`📦 Fetching posts for ${tileIds.length} tiles`);
-      console.log('🎯 Center tile:', getTileId(lat, lng));
-      console.log('📍 Tile IDs sample:', tileIds.slice(0, 5));
-      
+      console.log("🎯 Center tile:", getTileId(lat, lng));
+
       const response = await fetch(`${API_URL}/api/posts/by-tiles`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -97,10 +99,7 @@ export default function HomeScreen() {
       const data = await response.json();
       if (data.success) {
         console.log(`✅ Fetched ${data.posts.length} posts`);
-        if (data.posts.length === 0) {
-          console.log('⚠️ No posts found in this area!');
-          console.log('💡 Try seeding posts: curl -X POST http://localhost:3000/api/seed -H "Content-Type: application/json" -d \'{"centerLat": ' + lat + ', "centerLng": ' + lng + ', "count": 500}\'');
-        }
+        console.log(`📊 Zoom ${zoom}: Will group into supertiles`);
         setPosts(data.posts);
       }
     } catch (error) {
@@ -108,17 +107,17 @@ export default function HomeScreen() {
     }
   };
 
-  const handleRegionChange = (region: Region) => {
-    const calculatedZoom = getZoomLevel(region.latitudeDelta);
+  const handleRegionChange = (newRegion: Region) => {
+    const calculatedZoom = getZoomLevel(newRegion.latitudeDelta);
     setZoom(calculatedZoom);
-    
+
     // Debounce fetch - wait 500ms after user stops moving map
     if (fetchTimeoutRef.current) {
       clearTimeout(fetchTimeoutRef.current);
     }
-    
+
     fetchTimeoutRef.current = setTimeout(() => {
-      fetchNearbyPosts(region.latitude, region.longitude);
+      fetchNearbyPosts(newRegion.latitude, newRegion.longitude);
     }, 500);
   };
 
@@ -163,7 +162,7 @@ export default function HomeScreen() {
       }
 
       Alert.alert("Success!", "Post created successfully!");
-      
+
       // Add new post to local state
       setPosts([data.post, ...posts]);
 
@@ -178,51 +177,6 @@ export default function HomeScreen() {
       );
       console.error(error);
     }
-  };
-
-  // DEV ONLY: Seed posts around current location
-  const handleSeedPosts = async () => {
-    if (!location) {
-      Alert.alert("Error", "Location not available");
-      return;
-    }
-
-    Alert.alert(
-      "Seed Posts",
-      "Create 500 test posts around your location?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Seed",
-          onPress: async () => {
-            try {
-              const response = await fetch(`${API_URL}/api/seed`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  centerLat: location.coords.latitude,
-                  centerLng: location.coords.longitude,
-                  count: 500,
-                }),
-              });
-
-              const data = await response.json();
-
-              if (data.success) {
-                Alert.alert("Success!", `Seeded ${data.count} posts!`);
-                // Re-fetch posts
-                fetchNearbyPosts(location.coords.latitude, location.coords.longitude);
-              } else {
-                throw new Error(data.error || "Failed to seed");
-              }
-            } catch (error) {
-              Alert.alert("Error", "Failed to seed posts");
-              console.error(error);
-            }
-          },
-        },
-      ]
-    );
   };
 
   const handleAddTag = (text: string) => {
@@ -246,11 +200,18 @@ export default function HomeScreen() {
     setIsTileModalVisible(true);
   };
 
-  // Calculate grouping based on current zoom
+  // Calculate grouping based on current zoom - OPTIMIZED GROUPING!
   const groupingFactor = getGroupingFactor(zoom);
-  const supertiles = groupingFactor 
+  const supertiles = groupingFactor
     ? groupPostsByZoomLevel(posts, groupingFactor)
     : [];
+
+  // Log marker count for verification
+  if (supertiles.length > 0) {
+    console.log(
+      `🎯 Zoom ${zoom}: Showing ${supertiles.length} markers (grouping factor: ${groupingFactor})`
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -285,7 +246,7 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* Tile markers */}
+        {/* Tile markers with optimized grouping - NO clustering needed! */}
         {supertiles.map((tile) => (
           <Marker
             key={tile.supertile_id}
