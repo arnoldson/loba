@@ -1,70 +1,55 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { getColorByCount } from '@/utils/postGrouping';
+import { View, Text, StyleSheet } from "react-native";
 
 interface TileMarkerProps {
   count: number;
-  groupingFactor: number;
+  groupingFactor?: number | null;
 }
 
 export function TileMarker({ count, groupingFactor }: TileMarkerProps) {
-  // Marker size increases slightly with grouping
-  const baseSize = 30 + Math.log2(groupingFactor) * 3;
-  const countBonus = Math.min(count * 2, 20);
-  const size = Math.min(baseSize + countBonus, 60);
-  
-  // Color by post count
-  const color = getColorByCount(count);
-  
+  // Determine color based on post count
+  const getColor = () => {
+    if (count === 1) return "#4CAF50"; // Green - single post
+    if (count <= 5) return "#2196F3"; // Blue - few posts
+    if (count <= 10) return "#FFC107"; // Yellow - medium
+    if (count <= 20) return "#FF9800"; // Orange - many
+    return "#F44336"; // Red - very many
+  };
+
+  const color = getColor();
+
   return (
-    <View
-      style={[
-        styles.marker,
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: color,
-        },
-      ]}
-    >
-      <Text style={styles.count}>{count}</Text>
-      
-      {/* Show scale indicator for grouped tiles */}
-      {groupingFactor > 1 && (
-        <Text style={styles.scale}>×{groupingFactor}</Text>
-      )}
+    <View style={styles.container}>
+      {/* Main circular marker */}
+      <View style={[styles.marker, { backgroundColor: color }]}>
+        <Text style={styles.count}>{count}</Text>
+      </View>
+
+      {/* No grouping factor label - removed for end users */}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    alignItems: "center",
+  },
   marker: {
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
     borderWidth: 2,
-    borderColor: 'white',
-    shadowColor: '#000',
+    borderColor: "white",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
     elevation: 5,
   },
   count: {
-    color: 'white',
-    fontWeight: 'bold',
+    color: "white",
     fontSize: 14,
-  },
-  scale: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    color: 'white',
-    fontSize: 8,
-    fontWeight: 'bold',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 3,
-    paddingVertical: 1,
-    borderRadius: 4,
+    fontWeight: "bold",
   },
 });
