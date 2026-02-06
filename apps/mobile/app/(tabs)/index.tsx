@@ -1,6 +1,7 @@
 import * as Location from "expo-location";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -22,6 +23,11 @@ import {
   getTileId,
 } from "@/utils/tiles";
 import { groupPostsByZoomLevel, type SuperTile } from "@/utils/postGrouping";
+import {
+  getBoundingBox,
+  getVisibleAreaMeters,
+  BoundsCache,
+} from "@/utils/mapBounds";
 
 // Backend API URL
 const API_URL = Platform.select({
@@ -36,8 +42,10 @@ export default function HomeScreen() {
   );
   const [posts, setPosts] = useState<Post[]>([]);
   const [zoom, setZoom] = useState(18);
+  const [isLoadingPosts, setIsLoadingPosts] = useState(false);
   const mapRef = useRef<MapView>(null);
   const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const boundsCache = useRef(new BoundsCache(2000)).current;
 
   // Post creation modal
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -63,49 +71,102 @@ export default function HomeScreen() {
     })();
   }, []);
 
+  // Fetch posts for visible map area with caching
+  const fetchVisiblePosts = useCallback(
+    async (region: Region) => {
+      try {
+        const currentZoom = getZoomLevel(region.latitudeDelta);
+
+        if (currentZoom < 13) {
+          console.log(`⏸️  Zoom ${currentZoom} too low - skipping fetch`);
+          setPosts([]);
+          return;
+        }
+
+        setIsLoadingPosts(true);
+
+        const bounds = getBoundingBox(region);
+        const area = getVisibleAreaMeters(region);
+
+        console.log(`🗺️  Visible area: ${area.width}m × ${area.height}m`);
+        console.log(
+          `📦 Bounding box: [${bounds.minLat.toFixed(
+            4
+          )}, ${bounds.minLng.toFixed(4)}, ${bounds.maxLat.toFixed(
+            4
+          )}, ${bounds.maxLng.toFixed(4)}]`
+        );
+
+        const cachedPosts = boundsCache.get(bounds);
+        if (cachedPosts) {
+          console.log(`✅ Loaded ${cachedPosts.length} posts from cache`);
+          setPosts(cachedPosts);
+          setIsLoadingPosts(false);
+          return;
+        }
+
+        // START TIMING TOTAL REQUEST
+        const totalStartTime = Date.now();
+
+        const response = await fetch(`${API_URL}/api/posts/in-bounds`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bounds),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch posts");
+        }
+
+        const data = await response.json();
+
+        // CALCULATE TOTAL TIME
+        const totalTime = Date.now() - totalStartTime;
+
+        if (data.success) {
+          console.log(
+            `✅ Fetched ${data.posts.length} posts (DB: ${data.dbQueryTime}ms, Total: ${totalTime}ms)`
+          );
+
+          boundsCache.set(bounds, data.posts);
+          setPosts(data.posts);
+
+          console.log(
+            `💾 Cache now has ${boundsCache.getStats().size} regions`
+          );
+        }
+      } catch (error) {
+        console.error("❌ Error fetching posts:", error);
+      } finally {
+        setIsLoadingPosts(false);
+      }
+    },
+    [boundsCache]
+  );
+
   // Fetch nearby posts when location is available
   useEffect(() => {
-    if (location) {
+    if (location && mapRef.current) {
       console.log(
         "📍 Your location:",
         location.coords.latitude,
         location.coords.longitude
       );
-      console.log("🔍 Fetching posts in 303m radius");
 
-      fetchNearbyPosts(location.coords.latitude, location.coords.longitude);
-    }
-  }, [location]);
-
-  // Fetch nearby posts based on map region
-  const fetchNearbyPosts = async (lat: number, lng: number) => {
-    try {
-      // Get tile IDs in 303m × 303m area (101×101 tiles)
-      const tileIds = getTileRange(lat, lng, 50);
-
-      console.log(`📦 Fetching posts for ${tileIds.length} tiles`);
-      console.log("🎯 Center tile:", getTileId(lat, lng));
-
-      const response = await fetch(`${API_URL}/api/posts/by-tiles`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tile_ids: tileIds, limit: 5000 }),
+      // Fetch posts for initial view
+      mapRef.current.getCamera().then((camera) => {
+        if (camera) {
+          const initialRegion: Region = {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            latitudeDelta: 0.005,
+            longitudeDelta: 0.005,
+          };
+          fetchVisiblePosts(initialRegion);
+        }
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch posts");
-      }
-
-      const data = await response.json();
-      if (data.success) {
-        console.log(`✅ Fetched ${data.posts.length} posts`);
-        console.log(`📊 Zoom ${zoom}: Will group into supertiles`);
-        setPosts(data.posts);
-      }
-    } catch (error) {
-      console.error("❌ Error fetching posts:", error);
     }
-  };
+  }, [location, fetchVisiblePosts]);
 
   const handleRegionChange = (newRegion: Region) => {
     const calculatedZoom = getZoomLevel(newRegion.latitudeDelta);
@@ -117,7 +178,7 @@ export default function HomeScreen() {
     }
 
     fetchTimeoutRef.current = setTimeout(() => {
-      fetchNearbyPosts(newRegion.latitude, newRegion.longitude);
+      fetchVisiblePosts(newRegion);
     }, 500);
   };
 
@@ -263,6 +324,14 @@ export default function HomeScreen() {
       {groupingFactor === null && (
         <View style={styles.zoomHint}>
           <Text style={styles.zoomHintText}>Zoom in to see posts</Text>
+        </View>
+      )}
+
+      {/* Loading indicator */}
+      {isLoadingPosts && (
+        <View style={styles.loadingIndicator}>
+          <ActivityIndicator size="small" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading posts...</Text>
         </View>
       )}
 
@@ -418,6 +487,28 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 14,
     fontWeight: "500",
+  },
+  loadingIndicator: {
+    position: "absolute",
+    top: 100,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  loadingText: {
+    color: "#007AFF",
+    fontSize: 14,
+    fontWeight: "500",
+    marginLeft: 8,
   },
   modalContainer: {
     flex: 1,
