@@ -1,5 +1,5 @@
 import * as Location from "expo-location";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,18 +16,14 @@ import MapView, { Marker, Region } from "react-native-maps";
 import type { CreatePostRequest, CreatePostResponse, Post } from "@loba/shared";
 import { TileMarker } from "@/components/TileMarker";
 import { TileDetailsModal } from "@/components/TileDetailsModal";
-import {
-  getTileRange,
-  getZoomLevel,
-  getGroupingFactor,
-  getTileId,
-} from "@/utils/tiles";
+import { getZoomLevel, getGroupingFactor } from "@/utils/tiles";
 import { groupPostsByZoomLevel, type SuperTile } from "@/utils/postGrouping";
 import {
   getBoundingBox,
   getVisibleAreaMeters,
   BoundsCache,
 } from "@/utils/mapBounds";
+import { perfMonitor } from "@/utils/diagnostics";
 
 // Backend API URL
 const API_URL = Platform.select({
@@ -36,16 +32,21 @@ const API_URL = Platform.select({
   default: "http://localhost:3000",
 });
 
+// Initial map settings
+const INITIAL_LAT_DELTA = 0.005;
+
 export default function HomeScreen() {
   const [location, setLocation] = useState<Location.LocationObject | null>(
     null
   );
   const [posts, setPosts] = useState<Post[]>([]);
-  const [zoom, setZoom] = useState(18);
+  const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA));
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
+
   const mapRef = useRef<MapView>(null);
-  const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const boundsCache = useRef(new BoundsCache(2000)).current;
+  const boundsCache = useRef(new BoundsCache(50)).current;
+  const lastFetchTime = useRef(0);
+  const hasInitialFetched = useRef(false);
 
   // Post creation modal
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -56,6 +57,11 @@ export default function HomeScreen() {
   // Tile details modal
   const [selectedTile, setSelectedTile] = useState<SuperTile | null>(null);
   const [isTileModalVisible, setIsTileModalVisible] = useState(false);
+
+  // Track renders for performance monitoring
+  useEffect(() => {
+    perfMonitor.logRender("HomeScreen");
+  });
 
   // Get current location
   useEffect(() => {
@@ -71,10 +77,18 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Fetch posts for visible map area with caching
+  // Fetch posts for visible map area using bounding box
   const fetchVisiblePosts = useCallback(
     async (region: Region) => {
+      const fetchStartTime = Date.now();
+
       try {
+        // Check loading state directly
+        if (isLoadingPosts) {
+          console.log("⏭️  Skipping fetch - already loading");
+          return;
+        }
+
         const currentZoom = getZoomLevel(region.latitudeDelta);
 
         if (currentZoom < 13) {
@@ -84,6 +98,9 @@ export default function HomeScreen() {
         }
 
         setIsLoadingPosts(true);
+
+        // CRITICAL: Clear posts while loading to prevent marker index crashes
+        setPosts([]);
 
         const bounds = getBoundingBox(region);
         const area = getVisibleAreaMeters(region);
@@ -97,6 +114,7 @@ export default function HomeScreen() {
           )}, ${bounds.maxLng.toFixed(4)}]`
         );
 
+        // Check cache
         const cachedPosts = boundsCache.get(bounds);
         if (cachedPosts) {
           console.log(`✅ Loaded ${cachedPosts.length} posts from cache`);
@@ -105,9 +123,7 @@ export default function HomeScreen() {
           return;
         }
 
-        // START TIMING TOTAL REQUEST
-        const totalStartTime = Date.now();
-
+        // Fetch from backend
         const response = await fetch(`${API_URL}/api/posts/in-bounds`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -120,13 +136,14 @@ export default function HomeScreen() {
 
         const data = await response.json();
 
-        // CALCULATE TOTAL TIME
-        const totalTime = Date.now() - totalStartTime;
-
         if (data.success) {
+          const fetchDuration = Date.now() - fetchStartTime;
           console.log(
-            `✅ Fetched ${data.posts.length} posts (DB: ${data.dbQueryTime}ms, Total: ${totalTime}ms)`
+            `✅ Fetched ${data.posts.length} posts (DB: ${
+              data.dbQueryTime || "N/A"
+            }ms, Total: ${fetchDuration}ms)`
           );
+          perfMonitor.logFetch(fetchDuration, data.posts.length);
 
           boundsCache.set(bounds, data.posts);
           setPosts(data.posts);
@@ -137,6 +154,7 @@ export default function HomeScreen() {
         }
       } catch (error) {
         console.error("❌ Error fetching posts:", error);
+        setPosts([]); // Clear on error too
       } finally {
         setIsLoadingPosts(false);
       }
@@ -144,43 +162,66 @@ export default function HomeScreen() {
     [boundsCache]
   );
 
-  // Fetch nearby posts when location is available
+  // Fetch nearby posts when location is available - ONLY ONCE
   useEffect(() => {
-    if (location && mapRef.current) {
+    if (location && mapRef.current && !hasInitialFetched.current) {
+      hasInitialFetched.current = true;
+
       console.log(
         "📍 Your location:",
         location.coords.latitude,
         location.coords.longitude
       );
 
-      // Fetch posts for initial view
       mapRef.current.getCamera().then((camera) => {
         if (camera) {
           const initialRegion: Region = {
             latitude: location.coords.latitude,
             longitude: location.coords.longitude,
-            latitudeDelta: 0.005,
-            longitudeDelta: 0.005,
+            latitudeDelta: INITIAL_LAT_DELTA,
+            longitudeDelta: INITIAL_LAT_DELTA,
           };
+
+          const calculatedZoom = getZoomLevel(initialRegion.latitudeDelta);
+          console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`);
+          setZoom(calculatedZoom);
+
           fetchVisiblePosts(initialRegion);
         }
       });
     }
   }, [location, fetchVisiblePosts]);
 
+  // Handle map region changes while panning (lightweight - just update zoom)
   const handleRegionChange = (newRegion: Region) => {
     const calculatedZoom = getZoomLevel(newRegion.latitudeDelta);
     setZoom(calculatedZoom);
-
-    // Debounce fetch - wait 500ms after user stops moving map
-    if (fetchTimeoutRef.current) {
-      clearTimeout(fetchTimeoutRef.current);
-    }
-
-    fetchTimeoutRef.current = setTimeout(() => {
-      fetchVisiblePosts(newRegion);
-    }, 500);
   };
+
+  // Handle region change complete (when user stops panning - fetch posts)
+  const handleRegionChangeComplete = useCallback(
+    (region: Region) => {
+      const calculatedZoom = getZoomLevel(region.latitudeDelta);
+      setZoom(calculatedZoom);
+
+      // Don't fetch if already loading
+      if (isLoadingPosts) {
+        console.log("⏭️  Skipping - already loading");
+        return;
+      }
+
+      // Throttle: only fetch once per second
+      const now = Date.now();
+      if (now - lastFetchTime.current < 1000) {
+        console.log("⏭️  Skipping - throttled");
+        return;
+      }
+
+      lastFetchTime.current = now;
+      fetchVisiblePosts(region);
+    },
+    [isLoadingPosts, fetchVisiblePosts]
+  );
 
   const recenterMap = () => {
     if (location && mapRef.current) {
@@ -188,8 +229,8 @@ export default function HomeScreen() {
         {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
+          latitudeDelta: INITIAL_LAT_DELTA,
+          longitudeDelta: INITIAL_LAT_DELTA,
         },
         500
       );
@@ -224,8 +265,8 @@ export default function HomeScreen() {
 
       Alert.alert("Success!", "Post created successfully!");
 
-      // Add new post to local state
       setPosts([data.post, ...posts]);
+      boundsCache.clear();
 
       setPostText("");
       setTags([]);
@@ -261,11 +302,24 @@ export default function HomeScreen() {
     setIsTileModalVisible(true);
   };
 
-  // Calculate grouping based on current zoom - OPTIMIZED GROUPING!
+  // Calculate grouping based on current zoom - MEMOIZED with marker limit
   const groupingFactor = getGroupingFactor(zoom);
-  const supertiles = groupingFactor
-    ? groupPostsByZoomLevel(posts, groupingFactor)
-    : [];
+  const supertiles = useMemo(() => {
+    if (!groupingFactor) return [];
+
+    const grouped = groupPostsByZoomLevel(posts, groupingFactor);
+
+    // CRITICAL: Limit markers to prevent native crashes
+    const MAX_MARKERS = 150;
+    if (grouped.length > MAX_MARKERS) {
+      console.warn(
+        `⚠️  Too many markers (${grouped.length}), limiting to ${MAX_MARKERS}`
+      );
+      return grouped.slice(0, MAX_MARKERS);
+    }
+
+    return grouped;
+  }, [posts, groupingFactor]);
 
   // Log marker count for verification
   if (supertiles.length > 0) {
@@ -284,8 +338,8 @@ export default function HomeScreen() {
             ? {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
-                latitudeDelta: 0.005,
-                longitudeDelta: 0.005,
+                latitudeDelta: INITIAL_LAT_DELTA,
+                longitudeDelta: INITIAL_LAT_DELTA,
               }
             : {
                 latitude: 37.78825,
@@ -294,7 +348,8 @@ export default function HomeScreen() {
                 longitudeDelta: 0.0421,
               }
         }
-        onRegionChangeComplete={handleRegionChange}
+        onRegionChange={handleRegionChange}
+        onRegionChangeComplete={handleRegionChangeComplete}
       >
         {/* User location */}
         {location && (
@@ -307,17 +362,25 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* Tile markers with optimized grouping - NO clustering needed! */}
-        {supertiles.map((tile) => (
-          <Marker
-            key={tile.supertile_id}
-            coordinate={tile.center}
-            onPress={() => handleTilePress(tile)}
-            tracksViewChanges={false}
-          >
-            <TileMarker count={tile.count} groupingFactor={groupingFactor!} />
-          </Marker>
-        ))}
+        {/* Tile markers with optimized grouping and stable keys */}
+        {supertiles.map((tile) => {
+          // CRITICAL: Create unique key using post IDs to prevent index crashes
+          // Using first and last post ID creates a stable, unique identifier
+          const firstPostId = tile.posts[0]?.id || "";
+          const lastPostId = tile.posts[tile.posts.length - 1]?.id || "";
+          const uniqueKey = `z${zoom}-${tile.supertile_id}-${firstPostId}-${lastPostId}`;
+
+          return (
+            <Marker
+              key={uniqueKey}
+              coordinate={tile.center}
+              onPress={() => handleTilePress(tile)}
+              tracksViewChanges={false}
+            >
+              <TileMarker count={tile.count} groupingFactor={groupingFactor} />
+            </Marker>
+          );
+        })}
       </MapView>
 
       {/* Zoom indicator */}
@@ -569,7 +632,6 @@ const styles = StyleSheet.create({
     color: "white",
     fontWeight: "600",
   },
-
   tagInput: {
     borderWidth: 1,
     borderColor: "#ddd",
