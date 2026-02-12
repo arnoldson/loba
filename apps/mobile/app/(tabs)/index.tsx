@@ -1,5 +1,5 @@
-import * as Location from "expo-location";
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import * as Location from "expo-location"
+import { useCallback, useEffect, useRef, useState, useMemo } from "react"
 import {
   ActivityIndicator,
   Alert,
@@ -11,167 +11,226 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-} from "react-native";
-import MapView, { Marker, Region } from "react-native-maps";
-import type { CreatePostRequest, CreatePostResponse, Post } from "@loba/shared";
-import { TileMarker } from "@/components/TileMarker";
-import { TileDetailsModal } from "@/components/TileDetailsModal";
-import { getZoomLevel, getGroupingFactor } from "@/utils/tiles";
-import { groupPostsByZoomLevel, type SuperTile } from "@/utils/postGrouping";
+} from "react-native"
+import MapView, { Marker, Region } from "react-native-maps"
+import type { CreatePostRequest, CreatePostResponse, Post } from "@loba/shared"
+import { TileMarker } from "@/components/TileMarker"
+import { TileDetailsModal } from "@/components/TileDetailsModal"
+import { getZoomLevel, getGroupingFactor } from "@/utils/tiles"
 import {
-  getBoundingBox,
-  getVisibleAreaMeters,
-  BoundsCache,
-} from "@/utils/mapBounds";
-import { perfMonitor } from "@/utils/diagnostics";
+  type SuperTile,
+  SupertileCache,
+  getVisibleSupertileIds,
+  snapBoundsToGrid,
+  groupPostsIntoSupertiles,
+  type Bounds,
+} from "@/utils/postGrouping"
+import { getBoundingBox, getVisibleAreaMeters } from "@/utils/mapBounds"
+import { perfMonitor } from "@/utils/diagnostics"
 
 // Backend API URL
 const API_URL = Platform.select({
   ios: "http://localhost:3000",
   android: "http://10.0.2.2:3000",
   default: "http://localhost:3000",
-});
+})
 
 // Initial map settings
-const INITIAL_LAT_DELTA = 0.005;
+const INITIAL_LAT_DELTA = 0.005
+
+/**
+ * Expand a Region into bounds scaled by `factor` (e.g., 2.0 = 2× the viewport).
+ * Used for the eviction zone — supertiles outside this area are pruned from cache.
+ */
+function expandRegionToBounds(region: Region, factor: number): Bounds {
+  const latMargin = (region.latitudeDelta * factor) / 2
+  const lngMargin = (region.longitudeDelta * factor) / 2
+  return {
+    minLat: region.latitude - latMargin,
+    maxLat: region.latitude + latMargin,
+    minLng: region.longitude - lngMargin,
+    maxLng: region.longitude + lngMargin,
+  }
+}
 
 export default function HomeScreen() {
-  const [location, setLocation] = useState<Location.LocationObject | null>(
-    null
-  );
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA));
-  const [isLoadingPosts, setIsLoadingPosts] = useState(false);
+  const [location, setLocation] = useState<Location.LocationObject | null>(null)
+  const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA))
+  const [isLoadingPosts, setIsLoadingPosts] = useState(false)
 
-  const mapRef = useRef<MapView>(null);
-  const boundsCache = useRef(new BoundsCache(50)).current;
-  const lastFetchTime = useRef(0);
-  const hasInitialFetched = useRef(false);
+  // Supertile cache — THE source of truth for all tile data.
+  // Stores complete supertiles; only clears when grouping factor changes.
+  const supertileCache = useRef(new SupertileCache()).current
+
+  // The supertiles currently visible on screen — derived from the cache.
+  const [visibleSupertiles, setVisibleSupertiles] = useState<SuperTile[]>([])
+
+  const mapRef = useRef<MapView>(null)
+  const lastFetchTime = useRef(0)
+  const hasInitialFetched = useRef(false)
 
   // Post creation modal
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [postText, setPostText] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
+  const [isModalVisible, setIsModalVisible] = useState(false)
+  const [postText, setPostText] = useState("")
+  const [tags, setTags] = useState<string[]>([])
+  const [tagInput, setTagInput] = useState("")
 
   // Tile details modal
-  const [selectedTile, setSelectedTile] = useState<SuperTile | null>(null);
-  const [isTileModalVisible, setIsTileModalVisible] = useState(false);
+  const [selectedTile, setSelectedTile] = useState<SuperTile | null>(null)
+  const [isTileModalVisible, setIsTileModalVisible] = useState(false)
 
   // Track renders for performance monitoring
   useEffect(() => {
-    perfMonitor.logRender("HomeScreen");
-  });
+    perfMonitor.logRender("HomeScreen")
+  })
 
   // Get current location
   useEffect(() => {
-    (async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
+    ;(async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync()
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Location permission is required");
-        return;
+        Alert.alert("Permission denied", "Location permission is required")
+        return
       }
 
-      let currentLocation = await Location.getCurrentPositionAsync({});
-      setLocation(currentLocation);
-    })();
-  }, []);
+      let currentLocation = await Location.getCurrentPositionAsync({})
+      setLocation(currentLocation)
+    })()
+  }, [])
 
-  // Fetch posts for visible map area using bounding box
+  // Fetch posts for visible area — only fetches supertiles not already cached
   const fetchVisiblePosts = useCallback(
     async (region: Region) => {
-      const fetchStartTime = Date.now();
+      const fetchStartTime = Date.now()
 
       try {
-        // Check loading state directly
         if (isLoadingPosts) {
-          console.log("⏭️  Skipping fetch - already loading");
-          return;
+          console.log("⏭️  Skipping fetch - already loading")
+          return
         }
 
-        const currentZoom = getZoomLevel(region.latitudeDelta);
+        const currentZoom = getZoomLevel(region.latitudeDelta)
+        const grouping = getGroupingFactor(currentZoom)
 
-        if (currentZoom < 13) {
-          console.log(`⏸️  Zoom ${currentZoom} too low - skipping fetch`);
-          setPosts([]);
-          return;
+        if (!grouping || currentZoom < 13) {
+          console.log(`⏸️  Zoom ${currentZoom} too low - clearing`)
+          supertileCache.clear()
+          setVisibleSupertiles([])
+          return
         }
 
-        setIsLoadingPosts(true);
+        // 1. Determine which supertile grid cells are visible
+        const viewportBounds = getBoundingBox(region)
+        const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
 
-        // CRITICAL: Clear posts while loading to prevent marker index crashes
-        setPosts([]);
-
-        const bounds = getBoundingBox(region);
-        const area = getVisibleAreaMeters(region);
-
-        console.log(`🗺️  Visible area: ${area.width}m × ${area.height}m`);
         console.log(
-          `📦 Bounding box: [${bounds.minLat.toFixed(
-            4
-          )}, ${bounds.minLng.toFixed(4)}, ${bounds.maxLat.toFixed(
-            4
-          )}, ${bounds.maxLng.toFixed(4)}]`
-        );
+          `🔍 Visible: ${visibleIds.size} supertile cells at grouping ${grouping}`,
+        )
 
-        // Check cache
-        const cachedPosts = boundsCache.get(bounds);
-        if (cachedPosts) {
-          console.log(`✅ Loaded ${cachedPosts.length} posts from cache`);
-          setPosts(cachedPosts);
-          setIsLoadingPosts(false);
-          return;
+        // 2. Check which are missing from cache
+        const missingIds = supertileCache.getMissing(visibleIds, grouping)
+
+        if (missingIds.size === 0) {
+          // Everything is cached — just update the display, no fetch needed!
+          console.log(`✅ Full cache hit — ${visibleIds.size} supertiles`)
+          setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+
+          // Evict supertiles far from viewport (2× buffer)
+          const evictionBounds = expandRegionToBounds(region, 3.0)
+          const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
+          supertileCache.evictOutside(keepIds)
+          return
         }
 
-        // Fetch from backend
+        console.log(
+          `📡 Cache miss: ${missingIds.size}/${visibleIds.size} supertiles need fetching`,
+        )
+
+        setIsLoadingPosts(true)
+
+        // 3. Show what we have from cache immediately (no blank screen)
+        const cachedTiles = supertileCache.getVisible(visibleIds)
+        if (cachedTiles.length > 0) {
+          setVisibleSupertiles(cachedTiles)
+        }
+
+        // 4. Fetch the snapped bounding box (aligned to supertile grid)
+        //    This ensures we get COMPLETE supertiles at the edges
+        const snappedBounds = snapBoundsToGrid(viewportBounds, grouping)
+        const area = getVisibleAreaMeters(region)
+
+        console.log(`🗺️  Visible area: ${area.width}m × ${area.height}m`)
+        console.log(
+          `📦 Snapped bounds: [${snappedBounds.minLat.toFixed(
+            4,
+          )}, ${snappedBounds.minLng.toFixed(
+            4,
+          )}, ${snappedBounds.maxLat.toFixed(
+            4,
+          )}, ${snappedBounds.maxLng.toFixed(4)}]`,
+        )
+
         const response = await fetch(`${API_URL}/api/posts/in-bounds`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(bounds),
-        });
+          body: JSON.stringify(snappedBounds),
+        })
 
         if (!response.ok) {
-          throw new Error("Failed to fetch posts");
+          throw new Error("Failed to fetch posts")
         }
 
-        const data = await response.json();
+        const data = await response.json()
 
         if (data.success) {
-          const fetchDuration = Date.now() - fetchStartTime;
+          const fetchDuration = Date.now() - fetchStartTime
           console.log(
             `✅ Fetched ${data.posts.length} posts (DB: ${
               data.dbQueryTime || "N/A"
-            }ms, Total: ${fetchDuration}ms)`
-          );
-          perfMonitor.logFetch(fetchDuration, data.posts.length);
+            }ms, Total: ${fetchDuration}ms)`,
+          )
+          perfMonitor.logFetch(fetchDuration, data.posts.length)
 
-          boundsCache.set(bounds, data.posts);
-          setPosts(data.posts);
+          // 5. Group into supertiles and add to cache
+          const newSupertiles = groupPostsIntoSupertiles(data.posts, grouping)
+          supertileCache.addSupertiles(newSupertiles, grouping)
 
-          console.log(
-            `💾 Cache now has ${boundsCache.getStats().size} regions`
-          );
+          // 6. Update display from cache
+          setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+
+          // 7. Evict far-away supertiles (keep 3× viewport as buffer)
+          const evictionBounds = expandRegionToBounds(region, 3.0)
+          const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
+          supertileCache.evictOutside(keepIds)
+
+          console.log(`💾 Supertile cache: ${supertileCache.size} tiles`)
         }
       } catch (error) {
-        console.error("❌ Error fetching posts:", error);
-        setPosts([]); // Clear on error too
+        console.error("❌ Error fetching posts:", error)
+        // On error, show whatever is cached — don't blank the map
+        const grouping = getGroupingFactor(getZoomLevel(region.latitudeDelta))
+        if (grouping) {
+          const viewportBounds = getBoundingBox(region)
+          const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
+          setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+        }
       } finally {
-        setIsLoadingPosts(false);
+        setIsLoadingPosts(false)
       }
     },
-    [boundsCache]
-  );
+    [supertileCache],
+  )
 
   // Fetch nearby posts when location is available - ONLY ONCE
   useEffect(() => {
     if (location && mapRef.current && !hasInitialFetched.current) {
-      hasInitialFetched.current = true;
+      hasInitialFetched.current = true
 
       console.log(
         "📍 Your location:",
         location.coords.latitude,
-        location.coords.longitude
-      );
+        location.coords.longitude,
+      )
 
       mapRef.current.getCamera().then((camera) => {
         if (camera) {
@@ -180,48 +239,48 @@ export default function HomeScreen() {
             longitude: location.coords.longitude,
             latitudeDelta: INITIAL_LAT_DELTA,
             longitudeDelta: INITIAL_LAT_DELTA,
-          };
+          }
 
-          const calculatedZoom = getZoomLevel(initialRegion.latitudeDelta);
-          console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`);
-          setZoom(calculatedZoom);
+          const calculatedZoom = getZoomLevel(initialRegion.latitudeDelta)
+          console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`)
+          setZoom(calculatedZoom)
 
-          fetchVisiblePosts(initialRegion);
+          fetchVisiblePosts(initialRegion)
         }
-      });
+      })
     }
-  }, [location, fetchVisiblePosts]);
+  }, [location, fetchVisiblePosts])
 
   // Handle map region changes while panning (lightweight - just update zoom)
   const handleRegionChange = (newRegion: Region) => {
-    const calculatedZoom = getZoomLevel(newRegion.latitudeDelta);
-    setZoom(calculatedZoom);
-  };
+    const calculatedZoom = getZoomLevel(newRegion.latitudeDelta)
+    setZoom(calculatedZoom)
+  }
 
   // Handle region change complete (when user stops panning - fetch posts)
   const handleRegionChangeComplete = useCallback(
     (region: Region) => {
-      const calculatedZoom = getZoomLevel(region.latitudeDelta);
-      setZoom(calculatedZoom);
+      const calculatedZoom = getZoomLevel(region.latitudeDelta)
+      setZoom(calculatedZoom)
 
       // Don't fetch if already loading
       if (isLoadingPosts) {
-        console.log("⏭️  Skipping - already loading");
-        return;
+        console.log("⏭️  Skipping - already loading")
+        return
       }
 
       // Throttle: only fetch once per second
-      const now = Date.now();
+      const now = Date.now()
       if (now - lastFetchTime.current < 1000) {
-        console.log("⏭️  Skipping - throttled");
-        return;
+        console.log("⏭️  Skipping - throttled")
+        return
       }
 
-      lastFetchTime.current = now;
-      fetchVisiblePosts(region);
+      lastFetchTime.current = now
+      fetchVisiblePosts(region)
     },
-    [isLoadingPosts, fetchVisiblePosts]
-  );
+    [isLoadingPosts, fetchVisiblePosts],
+  )
 
   const recenterMap = () => {
     if (location && mapRef.current) {
@@ -232,15 +291,15 @@ export default function HomeScreen() {
           latitudeDelta: INITIAL_LAT_DELTA,
           longitudeDelta: INITIAL_LAT_DELTA,
         },
-        500
-      );
+        500,
+      )
     }
-  };
+  }
 
   const handleCreatePost = async () => {
     if (!location) {
-      Alert.alert("Error", "Location not available");
-      return;
+      Alert.alert("Error", "Location not available")
+      return
     }
 
     const requestBody: CreatePostRequest = {
@@ -248,84 +307,96 @@ export default function HomeScreen() {
       tags: tags,
       latitude: location.coords.latitude,
       longitude: location.coords.longitude,
-    };
+    }
 
     try {
       const response = await fetch(`${API_URL}/api/posts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
-      });
+      })
 
-      const data: CreatePostResponse = await response.json();
+      const data: CreatePostResponse = await response.json()
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || "Failed to create post");
+        throw new Error(data.error || "Failed to create post")
       }
 
-      Alert.alert("Success!", "Post created successfully!");
+      Alert.alert("Success!", "Post created successfully!")
 
-      setPosts([data.post, ...posts]);
-      boundsCache.clear();
+      // Add to supertile cache directly
+      const grouping = getGroupingFactor(zoom)
+      if (grouping) {
+        supertileCache.addPost(data.post, grouping)
+        // Re-derive visible supertiles from cache
+        if (mapRef.current) {
+          mapRef.current.getCamera().then((camera) => {
+            // Refresh the visible set from cache
+            const region: Region = {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              latitudeDelta: INITIAL_LAT_DELTA,
+              longitudeDelta: INITIAL_LAT_DELTA,
+            }
+            const viewportBounds = getBoundingBox(region)
+            const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
+            setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+          })
+        }
+      }
 
-      setPostText("");
-      setTags([]);
-      setTagInput("");
-      setIsModalVisible(false);
+      setPostText("")
+      setTags([])
+      setTagInput("")
+      setIsModalVisible(false)
     } catch (error) {
       Alert.alert(
         "Error",
-        error instanceof Error ? error.message : "Failed to create post"
-      );
-      console.error(error);
+        error instanceof Error ? error.message : "Failed to create post",
+      )
+      console.error(error)
     }
-  };
+  }
 
   const handleAddTag = (text: string) => {
-    setTagInput(text);
+    setTagInput(text)
 
     if (text.endsWith(" ") && text.trim().startsWith("#")) {
-      const newTag = text.trim();
+      const newTag = text.trim()
       if (newTag.length > 1 && !tags.includes(newTag)) {
-        setTags([...tags, newTag]);
-        setTagInput("");
+        setTags([...tags, newTag])
+        setTagInput("")
       }
     }
-  };
+  }
 
   const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter((tag) => tag !== tagToRemove));
-  };
+    setTags(tags.filter((tag) => tag !== tagToRemove))
+  }
 
   const handleTilePress = (tile: SuperTile) => {
-    setSelectedTile(tile);
-    setIsTileModalVisible(true);
-  };
+    setSelectedTile(tile)
+    setIsTileModalVisible(true)
+  }
 
-  // Calculate grouping based on current zoom - MEMOIZED with marker limit
-  const groupingFactor = getGroupingFactor(zoom);
+  // Apply marker limit to prevent native crashes
+  const groupingFactor = getGroupingFactor(zoom)
   const supertiles = useMemo(() => {
-    if (!groupingFactor) return [];
-
-    const grouped = groupPostsByZoomLevel(posts, groupingFactor);
-
-    // CRITICAL: Limit markers to prevent native crashes
-    const MAX_MARKERS = 150;
-    if (grouped.length > MAX_MARKERS) {
+    const MAX_MARKERS = 150
+    if (visibleSupertiles.length > MAX_MARKERS) {
       console.warn(
-        `⚠️  Too many markers (${grouped.length}), limiting to ${MAX_MARKERS}`
-      );
-      return grouped.slice(0, MAX_MARKERS);
+        `⚠️  Too many markers (${visibleSupertiles.length}), limiting to ${MAX_MARKERS}`,
+      )
+      return visibleSupertiles.slice(0, MAX_MARKERS)
     }
-
-    return grouped;
-  }, [posts, groupingFactor]);
+    return visibleSupertiles
+  }, [visibleSupertiles])
 
   // Log marker count for verification
   if (supertiles.length > 0) {
     console.log(
-      `🎯 Zoom ${zoom}: Showing ${supertiles.length} markers (grouping factor: ${groupingFactor})`
-    );
+      `🎯 Zoom ${zoom}: Showing ${supertiles.length} markers (grouping factor: ${groupingFactor})`,
+    )
   }
 
   return (
@@ -362,13 +433,12 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* Tile markers with optimized grouping and stable keys */}
+        {/* Supertile markers — keys are stable because supertiles are complete */}
         {supertiles.map((tile) => {
-          // CRITICAL: Create unique key using post IDs to prevent index crashes
-          // Using first and last post ID creates a stable, unique identifier
-          const firstPostId = tile.posts[0]?.id || "";
-          const lastPostId = tile.posts[tile.posts.length - 1]?.id || "";
-          const uniqueKey = `z${zoom}-${tile.supertile_id}-${firstPostId}-${lastPostId}`;
+          // Now that supertiles are fetched completely (grid-aligned), the
+          // supertile_id + groupingFactor is sufficient for a stable key.
+          // The content of a supertile only changes if the user creates a new post.
+          const uniqueKey = `g${groupingFactor}-${tile.supertile_id}`
 
           return (
             <Marker
@@ -379,7 +449,7 @@ export default function HomeScreen() {
             >
               <TileMarker count={tile.count} groupingFactor={groupingFactor} />
             </Marker>
-          );
+          )
         })}
       </MapView>
 
@@ -462,10 +532,10 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => {
-                  setPostText("");
-                  setTags([]);
-                  setTagInput("");
-                  setIsModalVisible(false);
+                  setPostText("")
+                  setTags([])
+                  setTagInput("")
+                  setIsModalVisible(false)
                 }}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -489,7 +559,7 @@ export default function HomeScreen() {
         onClose={() => setIsTileModalVisible(false)}
       />
     </View>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
@@ -665,4 +735,4 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginLeft: 4,
   },
-});
+})
