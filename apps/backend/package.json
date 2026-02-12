@@ -9,10 +9,10 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@fastify/cors": "^8.5.0",
+    "@fastify/cors": "^10.1.0",
     "@loba/shared": "*",
     "dotenv": "^16.3.1",
-    "fastify": "^4.25.2",
+    "fastify": "^5.7.4",
     "kysely": "^0.27.2",
     "pg": "^8.11.3"
   },
