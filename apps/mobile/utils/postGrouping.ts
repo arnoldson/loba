@@ -13,14 +13,14 @@
  *   5. Display from cache — filter to visible grid cells
  */
 
-import type { Post } from "@loba/shared"
+import type { PublicPost } from "@loba/shared"
 
 const TILE_SIZE_METERS = 3
 
 export interface SuperTile {
   supertile_id: string
   count: number
-  posts: Post[]
+  posts: PublicPost[]
   center: {
     latitude: number
     longitude: number
@@ -106,7 +106,6 @@ export function snapBoundsToGrid(
   const minTile = latLngToTile(bounds.minLat, bounds.minLng)
   const maxTile = latLngToTile(bounds.maxLat, bounds.maxLng)
 
-  // Snap outward to supertile boundaries
   const snappedMinLatTile =
     Math.floor(minTile.latTile / groupingFactor) * groupingFactor
   const snappedMaxLatTile =
@@ -116,7 +115,6 @@ export function snapBoundsToGrid(
   const snappedMaxLngTile =
     (Math.floor(maxTile.lngTile / groupingFactor) + 1) * groupingFactor
 
-  // Convert back to lat/lng
   const min = tileToLatLng(snappedMinLatTile, snappedMinLngTile, refLat)
   const max = tileToLatLng(snappedMaxLatTile, snappedMaxLngTile, refLat)
 
@@ -134,8 +132,8 @@ export function snapBoundsToGrid(
  * Normalize a post's coordinates (handle PostgreSQL string serialization).
  */
 function normalizePost(
-  post: Post,
-): Post & { latitude: number; longitude: number } {
+  post: PublicPost,
+): PublicPost & { latitude: number; longitude: number } {
   return {
     ...post,
     latitude:
@@ -154,7 +152,7 @@ function normalizePost(
  * Returns a Map keyed by supertile_id for easy cache insertion.
  */
 export function groupPostsIntoSupertiles(
-  posts: Post[],
+  posts: PublicPost[],
   groupingFactor: number,
 ): Map<string, SuperTile> {
   const validPosts = posts
@@ -168,7 +166,7 @@ export function groupPostsIntoSupertiles(
     .map(normalizePost)
 
   // Bucket posts by supertile_id
-  const buckets = new Map<string, Post[]>()
+  const buckets = new Map<string, PublicPost[]>()
 
   for (const post of validPosts) {
     const [latTileStr, lngTileStr] = post.tile_id.split(":")
@@ -216,7 +214,7 @@ export function groupPostsIntoSupertiles(
  * Prefer `groupPostsIntoSupertiles()` + `SupertileCache` for new code.
  */
 export function groupPostsByZoomLevel(
-  posts: Post[],
+  posts: PublicPost[],
   groupingFactor: number,
 ): SuperTile[] {
   const map = groupPostsIntoSupertiles(posts, groupingFactor)
@@ -316,7 +314,7 @@ export class SupertileCache {
   }
 
   /** Add a single post (e.g., user just created one). */
-  addPost(post: Post, groupingFactor: number): void {
+  addPost(post: PublicPost, groupingFactor: number): void {
     if (this.currentGroupingFactor !== groupingFactor) return
 
     const normalized = normalizePost(post)
