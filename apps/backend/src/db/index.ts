@@ -1,6 +1,6 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
-import type { Post } from '@loba/shared';
+import type { Post, UserProfile } from '@loba/shared';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
@@ -15,6 +15,7 @@ const { Pool } = pg;
 // Database schema interface
 export interface Database {
   posts: Post;
+  user_profiles: UserProfile;
 }
 
 // Create Kysely instance

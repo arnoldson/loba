@@ -1,3 +1,4 @@
+import { useAuth } from "@/utils/auth"
 import * as Location from "expo-location"
 import { useCallback, useEffect, useRef, useState, useMemo } from "react"
 import {
@@ -54,6 +55,7 @@ function expandRegionToBounds(region: Region, factor: number): Bounds {
 }
 
 export default function HomeScreen() {
+  const { getAuthHeaders } = useAuth()
   const [location, setLocation] = useState<Location.LocationObject | null>(null)
   const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA))
   const [isLoadingPosts, setIsLoadingPosts] = useState(false)
@@ -172,7 +174,7 @@ export default function HomeScreen() {
 
         const response = await fetch(`${API_URL}/api/posts/in-bounds`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify(snappedBounds),
         })
 
@@ -312,7 +314,7 @@ export default function HomeScreen() {
     try {
       const response = await fetch(`${API_URL}/api/posts`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(requestBody),
       })
 

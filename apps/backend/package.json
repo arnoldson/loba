@@ -11,6 +11,7 @@
   "dependencies": {
     "@fastify/cors": "^10.1.0",
     "@loba/shared": "*",
+    "@supabase/supabase-js": "^2.97.0",
     "dotenv": "^16.3.1",
     "fastify": "^5.7.4",
     "kysely": "^0.27.2",

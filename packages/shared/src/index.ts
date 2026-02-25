@@ -1,4 +1,5 @@
-// Database types
+// ─── Database types ──────────────────────────────────────────────────
+
 export type Post = {
   id: string;
   user_id: string | null;
@@ -12,7 +13,31 @@ export type Post = {
   updated_at: string;
 };
 
-// API Request types
+export type UserProfile = {
+  user_id: string;
+  verification_status: "unverified" | "pending" | "verified" | "rejected";
+  verified_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// ─── Public-facing post (stripped of user_id) ────────────────────────
+
+/** What other users see. user_id is replaced with a per-post display name. */
+export type PublicPost = Omit<Post, "user_id"> & {
+  display_name: string;
+  is_verified: boolean;
+};
+
+/** What the post author sees. Includes everything plus display name. */
+export type OwnPost = Post & {
+  display_name: string;
+  is_verified: boolean;
+  is_own: true;
+};
+
+// ─── API Request types ──────────────────────────────────────────────
+
 export type CreatePostRequest = {
   content: string;
   tags: string[];
@@ -26,20 +51,34 @@ export type GetPostsRequest = {
   limit?: number;
 };
 
-// API Response types
+// ─── API Response types ─────────────────────────────────────────────
+
 export type CreatePostResponse = {
   success: boolean;
-  post: Post;
+  post: OwnPost;
   error?: string;
 };
 
 export type GetPostsResponse = {
   success: boolean;
-  posts: Post[];
+  posts: PublicPost[];
   error?: string;
 };
 
-// Utility types
+export type GetMyPostsResponse = {
+  success: boolean;
+  posts: OwnPost[];
+  error?: string;
+};
+
+export type AuthStatusResponse = {
+  success: boolean;
+  user_id: string;
+  verification_status: UserProfile["verification_status"];
+};
+
+// ─── Utility types ──────────────────────────────────────────────────
+
 export type ApiError = {
   success: false;
   error: string;

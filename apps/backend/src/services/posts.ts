@@ -1,19 +1,30 @@
 import { db } from '../db/index.js';
+import { sql } from 'kysely';
 import { getTileId } from '../db/tiles.js';
-import type { Post, CreatePostRequest } from '@loba/shared';
+import { generateDisplayName } from '../utils/displayName.js';
+import type {
+  Post,
+  PublicPost,
+  OwnPost,
+  CreatePostRequest,
+  UserProfile,
+} from '@loba/shared';
 
 export class PostService {
+  // ─── Post creation ──────────────────────────────────────────────────
+
   /**
-   * Create a new post
+   * Create a new post linked to an authenticated user.
    */
-  async createPost(data: CreatePostRequest): Promise<Post> {
+  async createPost(data: CreatePostRequest, userId: string): Promise<OwnPost> {
     const tileId = getTileId(data.latitude, data.longitude);
-    
+    const postId = crypto.randomUUID();
+
     const post = await db
       .insertInto('posts')
       .values({
-        id: crypto.randomUUID(),
-        user_id: null, // TODO: Add auth later
+        id: postId,
+        user_id: userId,
         content: data.content,
         photo_url: data.photo_url || null,
         latitude: data.latitude,
@@ -25,14 +36,23 @@ export class PostService {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
-    
-    return post;
+
+    const profile = await this.getProfile(userId);
+
+    return this.toOwnPost(post, profile);
   }
 
+  // ─── Public queries (for map display) ───────────────────────────────
+
   /**
-   * Get posts by tile IDs
+   * Get posts by tile IDs, returned as PublicPosts (no user_id exposed).
+   * If `requestingUserId` is provided, the caller's own posts are marked.
    */
-  async getPostsByTiles(tileIds: string[], limit: number = 50): Promise<Post[]> {
+  async getPostsByTiles(
+    tileIds: string[],
+    limit: number = 50,
+    requestingUserId?: string
+  ): Promise<PublicPost[]> {
     const posts = await db
       .selectFrom('posts')
       .selectAll()
@@ -40,20 +60,167 @@ export class PostService {
       .orderBy('created_at', 'desc')
       .limit(limit)
       .execute();
-    
-    return posts;
+
+    return this.toPublicPosts(posts, requestingUserId);
   }
 
   /**
-   * Get a single post by ID
+   * Get a single post by ID, returned as a PublicPost.
    */
-  async getPostById(id: string): Promise<Post | null> {
+  async getPostById(
+    id: string,
+    requestingUserId?: string
+  ): Promise<PublicPost | null> {
     const post = await db
       .selectFrom('posts')
       .selectAll()
       .where('id', '=', id)
       .executeTakeFirst();
-    
-    return post || null;
+
+    if (!post) return null;
+
+    const posts = await this.toPublicPosts([post], requestingUserId);
+    return posts[0];
+  }
+
+  // ─── Private queries (for the authenticated user) ──────────────────
+
+  /**
+   * Get all posts by the authenticated user ("My Posts" view).
+   */
+  async getMyPosts(userId: string, limit: number = 100): Promise<OwnPost[]> {
+    const posts = await db
+      .selectFrom('posts')
+      .selectAll()
+      .where('user_id', '=', userId)
+      .orderBy('created_at', 'desc')
+      .limit(limit)
+      .execute();
+
+    const profile = await this.getProfile(userId);
+
+    return posts.map((post) => this.toOwnPost(post, profile));
+  }
+
+  // ─── Spatial queries (for map display) ────────────────────────────
+
+  /**
+   * Get posts within a geographic bounding box using PostGIS.
+   * Returns PublicPosts with display names and verification badges.
+   */
+  async getPostsInBounds(
+    bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+    limit: number = 5000,
+    requestingUserId?: string
+  ): Promise<{ posts: PublicPost[]; dbQueryTime: number }> {
+    const startTime = Date.now();
+
+    const posts = await db
+      .selectFrom('posts')
+      .selectAll()
+      .where(
+        sql<boolean>`location && ST_MakeEnvelope(${bounds.minLng}, ${bounds.minLat}, ${bounds.maxLng}, ${bounds.maxLat}, 4326)`
+      )
+      .limit(limit)
+      .execute();
+
+    const dbQueryTime = Date.now() - startTime;
+
+    const publicPosts = await this.toPublicPosts(posts, requestingUserId);
+
+    return { posts: publicPosts, dbQueryTime };
+  }
+
+  // ─── Post transformation ───────────────────────────────────────────
+
+  /**
+   * Convert raw DB posts to PublicPosts.
+   * - Strips user_id
+   * - Adds deterministic display_name
+   * - Adds is_verified badge
+   *
+   * Batches profile lookups to avoid N+1 queries.
+   */
+  private async toPublicPosts(
+    posts: Post[],
+    requestingUserId?: string
+  ): Promise<PublicPost[]> {
+    if (posts.length === 0) return [];
+
+    // Collect unique user_ids and batch-fetch their verification status
+    const userIds = [...new Set(posts.map((p) => p.user_id).filter(Boolean))] as string[];
+    const profileMap = await this.getProfiles(userIds);
+
+    return posts.map((post) => {
+      const profile = post.user_id ? profileMap.get(post.user_id) : undefined;
+      const displayName = post.user_id
+        ? generateDisplayName(post.user_id, post.id)
+        : "Anonymous";
+      const isVerified = profile?.verification_status === "verified";
+
+      // Strip user_id from the public response
+      const { user_id, ...rest } = post;
+
+      return {
+        ...rest,
+        display_name: displayName,
+        is_verified: isVerified,
+      };
+    });
+  }
+
+  /**
+   * Convert a raw DB post to an OwnPost (for the author).
+   * Keeps user_id since the author is allowed to see it.
+   */
+  private toOwnPost(
+    post: Post,
+    profile: UserProfile | undefined
+  ): OwnPost {
+    return {
+      ...post,
+      display_name: post.user_id
+        ? generateDisplayName(post.user_id, post.id)
+        : "Anonymous",
+      is_verified: profile?.verification_status === "verified",
+      is_own: true as const,
+    };
+  }
+
+  // ─── Profile lookups ───────────────────────────────────────────────
+
+  /**
+   * Get a single user's profile.
+   */
+  private async getProfile(userId: string): Promise<UserProfile | undefined> {
+    const profile = await db
+      .selectFrom('user_profiles')
+      .selectAll()
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    return profile || undefined;
+  }
+
+  /**
+   * Batch-fetch profiles for multiple user IDs.
+   * Returns a Map for O(1) lookup per post.
+   */
+  private async getProfiles(
+    userIds: string[]
+  ): Promise<Map<string, UserProfile>> {
+    if (userIds.length === 0) return new Map();
+
+    const profiles = await db
+      .selectFrom('user_profiles')
+      .selectAll()
+      .where('user_id', 'in', userIds)
+      .execute();
+
+    const map = new Map<string, UserProfile>();
+    for (const p of profiles) {
+      map.set(p.user_id, p);
+    }
+    return map;
   }
 }

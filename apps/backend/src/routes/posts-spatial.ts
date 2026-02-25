@@ -1,11 +1,14 @@
 /**
- * Spatial posts endpoints using PostGIS bounding box queries
- * Replaces tile_id array approach with geographic bounding boxes
+ * Spatial posts endpoints using PostGIS bounding box queries.
+ * Delegates to PostService so display names and verification
+ * badges are applied consistently.
  */
 
 import { FastifyPluginAsync } from "fastify";
 import { sql } from "kysely";
-import { db } from "../db";
+import { db } from "../db/index.js";
+import { PostService } from "../services/posts.js";
+import { optionalAuth } from "../middleware/auth.js";
 
 interface PostsInBoundsRequest {
   minLat: number;
@@ -16,62 +19,61 @@ interface PostsInBoundsRequest {
 }
 
 export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
+  const postService = new PostService();
+
   /**
    * POST /api/posts/in-bounds
-   * Get posts within a geographic bounding box
-   *
-   * Body:
-   * {
-   *   minLat: 37.788,
-   *   maxLat: 37.790,
-   *   minLng: -122.408,
-   *   maxLng: -122.405,
-   *   limit: 5000  // optional
-   * }
+   * Get posts within a geographic bounding box.
+   * Returns PublicPosts (no user_id, with display_name and is_verified).
    */
-  fastify.post("/api/posts/in-bounds", async (request, reply) => {
-    const {
-      minLat,
-      maxLat,
-      minLng,
-      maxLng,
-      limit = 5000,
-    } = request.body as {
-      minLat: number;
-      maxLat: number;
-      minLng: number;
-      maxLng: number;
-      limit?: number;
-    };
+  fastify.post(
+    "/api/posts/in-bounds",
+    { preHandler: [optionalAuth] },
+    async (request, reply) => {
+      const {
+        minLat,
+        maxLat,
+        minLng,
+        maxLng,
+        limit = 5000,
+      } = request.body as PostsInBoundsRequest;
 
-    // ... validation code ...
+      // Validation
+      if (
+        minLat == null ||
+        maxLat == null ||
+        minLng == null ||
+        maxLng == null
+      ) {
+        return reply.status(400).send({
+          success: false,
+          error: "Missing required bounds: minLat, maxLat, minLng, maxLng",
+        });
+      }
 
-    try {
-      // ADD THIS LINE:
-      const startTime = Date.now();
+      try {
+        const { posts, dbQueryTime } = await postService.getPostsInBounds(
+          { minLat, maxLat, minLng, maxLng },
+          limit,
+          request.userId
+        );
 
-      const posts = await db
-        .selectFrom("posts")
-        .selectAll()
-        .where(
-          sql<boolean>`location && ST_MakeEnvelope(${minLng}, ${minLat}, ${maxLng}, ${maxLat}, 4326)`
-        )
-        .limit(limit)
-        .execute();
-
-      // ADD THIS LINE:
-      const dbQueryTime = Date.now() - startTime;
-
-      return {
-        success: true,
-        posts,
-        count: posts.length,
-        dbQueryTime, // ADD THIS LINE
-      };
-    } catch (error) {
-      // ... error handling ...
+        return {
+          success: true,
+          posts,
+          count: posts.length,
+          dbQueryTime,
+        };
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          success: false,
+          error: "Failed to fetch posts",
+          details: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
     }
-  });
+  );
 
   /**
    * GET /api/posts/in-bounds/test
@@ -79,7 +81,6 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
    */
   fastify.get("/api/posts/in-bounds/test", async (request, reply) => {
     try {
-      // Check if PostGIS is installed
       const postgisCheck = await db
         .selectFrom(sql`pg_extension`.as("ext"))
         .select(sql`extname`.as("name"))
@@ -93,7 +94,6 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Check if location column exists
       const columnCheck = await db
         .selectFrom(sql`information_schema.columns`.as("cols"))
         .select(sql`column_name`.as("column"))
@@ -108,7 +108,6 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Check if spatial index exists
       const indexCheck = await db
         .selectFrom(sql`pg_indexes`.as("idx"))
         .select([sql`indexname`.as("name"), sql`indexdef`.as("definition")])
@@ -123,7 +122,6 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Run a test query and check if it uses the index
       const testQuery = await db
         .selectFrom("posts")
         .selectAll()
