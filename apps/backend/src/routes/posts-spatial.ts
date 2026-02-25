@@ -4,22 +4,22 @@
  * badges are applied consistently.
  */
 
-import { FastifyPluginAsync } from "fastify";
-import { sql } from "kysely";
-import { db } from "../db/index.js";
-import { PostService } from "../services/posts.js";
-import { optionalAuth } from "../middleware/auth.js";
+import { FastifyPluginAsync } from "fastify"
+import { sql } from "kysely"
+import { db } from "../db/index.js"
+import { PostService } from "../services/posts.js"
+import { optionalAuth } from "../middleware/auth.js"
 
 interface PostsInBoundsRequest {
-  minLat: number;
-  maxLat: number;
-  minLng: number;
-  maxLng: number;
-  limit?: number;
+  minLat: number
+  maxLat: number
+  minLng: number
+  maxLng: number
+  limit?: number
 }
 
 export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
-  const postService = new PostService();
+  const postService = new PostService()
 
   /**
    * POST /api/posts/in-bounds
@@ -36,7 +36,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         minLng,
         maxLng,
         limit = 5000,
-      } = request.body as PostsInBoundsRequest;
+      } = request.body as PostsInBoundsRequest
 
       // Validation
       if (
@@ -48,32 +48,32 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({
           success: false,
           error: "Missing required bounds: minLat, maxLat, minLng, maxLng",
-        });
+        })
       }
 
       try {
         const { posts, dbQueryTime } = await postService.getPostsInBounds(
           { minLat, maxLat, minLng, maxLng },
           limit,
-          request.userId
-        );
+          request.userId,
+        )
 
         return {
           success: true,
           posts,
           count: posts.length,
           dbQueryTime,
-        };
+        }
       } catch (error) {
-        fastify.log.error(error);
+        fastify.log.error(error)
         return reply.status(500).send({
           success: false,
           error: "Failed to fetch posts",
           details: error instanceof Error ? error.message : "Unknown error",
-        });
+        })
       }
-    }
-  );
+    },
+  )
 
   /**
    * GET /api/posts/in-bounds/test
@@ -85,13 +85,13 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         .selectFrom(sql`pg_extension`.as("ext"))
         .select(sql`extname`.as("name"))
         .where(sql`extname`, "=", "postgis")
-        .executeTakeFirst();
+        .executeTakeFirst()
 
       if (!postgisCheck) {
         return reply.status(500).send({
           success: false,
           error: "PostGIS extension not installed",
-        });
+        })
       }
 
       const columnCheck = await db
@@ -99,13 +99,13 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         .select(sql`column_name`.as("column"))
         .where(sql`table_name`, "=", "posts")
         .where(sql`column_name`, "=", "location")
-        .executeTakeFirst();
+        .executeTakeFirst()
 
       if (!columnCheck) {
         return reply.status(500).send({
           success: false,
           error: "Location column not found on posts table",
-        });
+        })
       }
 
       const indexCheck = await db
@@ -113,23 +113,23 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         .select([sql`indexname`.as("name"), sql`indexdef`.as("definition")])
         .where(sql`tablename`, "=", "posts")
         .where(sql`indexname`, "=", "idx_posts_location")
-        .executeTakeFirst();
+        .executeTakeFirst()
 
       if (!indexCheck) {
         return reply.status(500).send({
           success: false,
           error: "Spatial index not found",
-        });
+        })
       }
 
       const testQuery = await db
         .selectFrom("posts")
         .selectAll()
         .where(
-          sql`location && ST_MakeEnvelope(-122.408, 37.788, -122.405, 37.790, 4326)`
+          sql<boolean>`location && ST_MakeEnvelope(-122.408, 37.788, -122.405, 37.790, 4326)`,
         )
         .limit(10)
-        .execute();
+        .execute()
 
       return reply.send({
         success: true,
@@ -140,14 +140,14 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
           spatialIndex: !!indexCheck,
         },
         testQueryResults: testQuery.length,
-      });
+      })
     } catch (error) {
-      fastify.log.error(error);
+      fastify.log.error(error)
       return reply.status(500).send({
         success: false,
         error: "Test failed",
         details: error instanceof Error ? error.message : "Unknown error",
-      });
+      })
     }
-  });
-};
+  })
+}
