@@ -4,19 +4,16 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react"
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Modal,
   Platform,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native"
 import MapView, { Marker, Region } from "react-native-maps"
-import type { CreatePostRequest, CreatePostResponse, Post } from "@loba/shared"
 import { TileMarker } from "@/components/TileMarker"
 import { TileDetailsModal } from "@/components/TileDetailsModal"
+import { CreatePostModal } from "@/components/CreatePostModal"
 import { getZoomLevel, getGroupingFactor } from "@/utils/tiles"
 import {
   type SuperTile,
@@ -61,7 +58,6 @@ export default function HomeScreen() {
   const [isLoadingPosts, setIsLoadingPosts] = useState(false)
 
   // Supertile cache — THE source of truth for all tile data.
-  // Stores complete supertiles; only clears when grouping factor changes.
   const supertileCache = useRef(new SupertileCache()).current
 
   // The supertiles currently visible on screen — derived from the cache.
@@ -71,13 +67,8 @@ export default function HomeScreen() {
   const lastFetchTime = useRef(0)
   const hasInitialFetched = useRef(false)
 
-  // Post creation modal
-  const [isModalVisible, setIsModalVisible] = useState(false)
-  const [postText, setPostText] = useState("")
-  const [tags, setTags] = useState<string[]>([])
-  const [tagInput, setTagInput] = useState("")
-
-  // Tile details modal
+  // Modal visibility
+  const [isCreateModalVisible, setIsCreateModalVisible] = useState(false)
   const [selectedTile, setSelectedTile] = useState<SuperTile | null>(null)
   const [isTileModalVisible, setIsTileModalVisible] = useState(false)
 
@@ -137,7 +128,7 @@ export default function HomeScreen() {
           console.log(`✅ Full cache hit — ${visibleIds.size} supertiles`)
           setVisibleSupertiles(supertileCache.getVisible(visibleIds))
 
-          // Evict supertiles far from viewport (2× buffer)
+          // Evict supertiles far from viewport (3× buffer)
           const evictionBounds = expandRegionToBounds(region, 3.0)
           const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
           supertileCache.evictOutside(keepIds)
@@ -265,13 +256,11 @@ export default function HomeScreen() {
       const calculatedZoom = getZoomLevel(region.latitudeDelta)
       setZoom(calculatedZoom)
 
-      // Don't fetch if already loading
       if (isLoadingPosts) {
         console.log("⏭️  Skipping - already loading")
         return
       }
 
-      // Throttle: only fetch once per second
       const now = Date.now()
       if (now - lastFetchTime.current < 1000) {
         console.log("⏭️  Skipping - throttled")
@@ -298,83 +287,25 @@ export default function HomeScreen() {
     }
   }
 
-  const handleCreatePost = async () => {
-    if (!location) {
-      Alert.alert("Error", "Location not available")
-      return
-    }
-
-    const requestBody: CreatePostRequest = {
-      content: postText,
-      tags: tags,
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/api/posts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify(requestBody),
-      })
-
-      const data: CreatePostResponse = await response.json()
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Failed to create post")
-      }
-
-      Alert.alert("Success!", "Post created successfully!")
-
-      // Add to supertile cache directly
+  // Called by CreatePostModal after a successful post
+  const handlePostCreated = useCallback(
+    (post: any) => {
       const grouping = getGroupingFactor(zoom)
-      if (grouping) {
-        supertileCache.addPost(data.post, grouping)
-        // Re-derive visible supertiles from cache
-        if (mapRef.current) {
-          mapRef.current.getCamera().then((camera) => {
-            // Refresh the visible set from cache
-            const region: Region = {
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              latitudeDelta: INITIAL_LAT_DELTA,
-              longitudeDelta: INITIAL_LAT_DELTA,
-            }
-            const viewportBounds = getBoundingBox(region)
-            const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
-            setVisibleSupertiles(supertileCache.getVisible(visibleIds))
-          })
+      if (grouping && location) {
+        supertileCache.addPost(post, grouping)
+        const region: Region = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+          latitudeDelta: INITIAL_LAT_DELTA,
+          longitudeDelta: INITIAL_LAT_DELTA,
         }
+        const viewportBounds = getBoundingBox(region)
+        const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
+        setVisibleSupertiles(supertileCache.getVisible(visibleIds))
       }
-
-      setPostText("")
-      setTags([])
-      setTagInput("")
-      setIsModalVisible(false)
-    } catch (error) {
-      Alert.alert(
-        "Error",
-        error instanceof Error ? error.message : "Failed to create post",
-      )
-      console.error(error)
-    }
-  }
-
-  const handleAddTag = (text: string) => {
-    setTagInput(text)
-
-    if (text.endsWith(" ") && text.trim().startsWith("#")) {
-      const newTag = text.trim()
-      if (newTag.length > 1 && !tags.includes(newTag)) {
-        setTags([...tags, newTag])
-        setTagInput("")
-      }
-    }
-  }
-
-  const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter((tag) => tag !== tagToRemove))
-  }
+    },
+    [zoom, location, supertileCache],
+  )
 
   const handleTilePress = (tile: SuperTile) => {
     setSelectedTile(tile)
@@ -394,7 +325,6 @@ export default function HomeScreen() {
     return visibleSupertiles
   }, [visibleSupertiles])
 
-  // Log marker count for verification
   if (supertiles.length > 0) {
     console.log(
       `🎯 Zoom ${zoom}: Showing ${supertiles.length} markers (grouping factor: ${groupingFactor})`,
@@ -424,7 +354,6 @@ export default function HomeScreen() {
         onRegionChange={handleRegionChange}
         onRegionChangeComplete={handleRegionChangeComplete}
       >
-        {/* User location */}
         {location && (
           <Marker
             coordinate={{
@@ -435,11 +364,7 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* Supertile markers — keys are stable because supertiles are complete */}
         {supertiles.map((tile) => {
-          // Now that supertiles are fetched completely (grid-aligned), the
-          // supertile_id + groupingFactor is sufficient for a stable key.
-          // The content of a supertile only changes if the user creates a new post.
           const uniqueKey = `g${groupingFactor}-${tile.supertile_id}`
 
           return (
@@ -455,14 +380,12 @@ export default function HomeScreen() {
         })}
       </MapView>
 
-      {/* Zoom indicator */}
       {groupingFactor === null && (
         <View style={styles.zoomHint}>
           <Text style={styles.zoomHintText}>Zoom in to see posts</Text>
         </View>
       )}
 
-      {/* Loading indicator */}
       {isLoadingPosts && (
         <View style={styles.loadingIndicator}>
           <ActivityIndicator size="small" color="#007AFF" />
@@ -472,7 +395,7 @@ export default function HomeScreen() {
 
       <TouchableOpacity
         style={styles.createButton}
-        onPress={() => setIsModalVisible(true)}
+        onPress={() => setIsCreateModalVisible(true)}
       >
         <Text style={styles.createButtonText}>+</Text>
       </TouchableOpacity>
@@ -481,80 +404,16 @@ export default function HomeScreen() {
         <Text style={styles.recenterButtonText}>⦿</Text>
       </TouchableOpacity>
 
-      {/* Create Post Modal */}
-      <Modal
-        visible={isModalVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setIsModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={styles.modalContainer}
-        >
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            onPress={() => setIsModalVisible(false)}
-          />
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Create Post</Text>
+      {location && (
+        <CreatePostModal
+          visible={isCreateModalVisible}
+          onClose={() => setIsCreateModalVisible(false)}
+          latitude={location.coords.latitude}
+          longitude={location.coords.longitude}
+          onPostCreated={handlePostCreated}
+        />
+      )}
 
-            <TextInput
-              style={styles.textInput}
-              placeholder="What's happening here?"
-              value={postText}
-              onChangeText={setPostText}
-              multiline
-              maxLength={280}
-            />
-
-            <TextInput
-              style={styles.tagInput}
-              placeholder="Add tags (e.g., #food #event)"
-              value={tagInput}
-              onChangeText={handleAddTag}
-            />
-
-            {tags.length > 0 && (
-              <View style={styles.tagsContainer}>
-                {tags.map((tag, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={styles.tagChip}
-                    onPress={() => removeTag(tag)}
-                  >
-                    <Text style={styles.tagText}>{tag}</Text>
-                    <Text style={styles.removeTag}> ×</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            <View style={styles.buttonRow}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setPostText("")
-                  setTags([])
-                  setTagInput("")
-                  setIsModalVisible(false)
-                }}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.postButton}
-                onPress={handleCreatePost}
-              >
-                <Text style={styles.postButtonText}>Post</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* Tile Details Modal */}
       <TileDetailsModal
         visible={isTileModalVisible}
         tile={selectedTile}
@@ -644,97 +503,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     marginLeft: 8,
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-  },
-  modalContent: {
-    backgroundColor: "white",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 40,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 15,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 12,
-    minHeight: 100,
-    textAlignVertical: "top",
-    fontSize: 16,
-    marginBottom: 15,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  cancelButton: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    backgroundColor: "#f0f0f0",
-    marginRight: 10,
-    alignItems: "center",
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    color: "#666",
-  },
-  postButton: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    backgroundColor: "#007AFF",
-    marginLeft: 10,
-    alignItems: "center",
-  },
-  postButtonText: {
-    fontSize: 16,
-    color: "white",
-    fontWeight: "600",
-  },
-  tagInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 10,
-  },
-  tagsContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginBottom: 15,
-  },
-  tagChip: {
-    flexDirection: "row",
-    backgroundColor: "#007AFF",
-    borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    marginRight: 8,
-    marginBottom: 8,
-    alignItems: "center",
-  },
-  tagText: {
-    color: "white",
-    fontSize: 14,
-  },
-  removeTag: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "bold",
-    marginLeft: 4,
   },
 })
