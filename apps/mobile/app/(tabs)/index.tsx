@@ -52,7 +52,7 @@ function expandRegionToBounds(region: Region, factor: number): Bounds {
 }
 
 export default function HomeScreen() {
-  const { getAuthHeaders } = useAuth()
+  const { getAuthHeaders, session } = useAuth()
   const [location, setLocation] = useState<Location.LocationObject | null>(null)
   const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA))
   const [isLoadingPosts, setIsLoadingPosts] = useState(false)
@@ -418,6 +418,7 @@ export default function HomeScreen() {
         visible={isTileModalVisible}
         tile={selectedTile}
         onClose={() => setIsTileModalVisible(false)}
+        authToken={session?.access_token ?? null}
       />
     </View>
   )

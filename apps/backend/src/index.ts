@@ -15,6 +15,7 @@ import { seedRoutes } from "./routes/seed.js"
 import { db } from "./db/index.js"
 import { postsSpatialRoutes } from "./routes/posts-spatial"
 import { devAuthRoutes } from "./routes/dev-auth.js"
+import { commentRoutes } from "./routes/comments.js"
 
 // Debug: Check if DATABASE_URL is loaded
 console.log("DATABASE_URL exists:", !!process.env.DATABASE_URL)
@@ -85,6 +86,7 @@ fastify.get("/debug/posts", async (request, reply) => {
 // Register routes
 await fastify.register(postRoutes, { prefix: "/api" })
 await fastify.register(seedRoutes, { prefix: "/api" })
+await fastify.register(commentRoutes, { prefix: "/api" })
 await fastify.register(postsSpatialRoutes)
 
 // Start server
