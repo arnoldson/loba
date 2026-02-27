@@ -14,6 +14,7 @@ import MapView, { Marker, Region } from "react-native-maps"
 import { TileMarker } from "@/components/TileMarker"
 import { TileDetailsModal } from "@/components/TileDetailsModal"
 import { CreatePostModal } from "@/components/CreatePostModal"
+import { TagFilterBar } from "@/components/TagFilterBar"
 import { getZoomLevel, getGroupingFactor } from "@/utils/tiles"
 import {
   type SuperTile,
@@ -57,6 +58,9 @@ export default function HomeScreen() {
   const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA))
   const [isLoadingPosts, setIsLoadingPosts] = useState(false)
 
+  // Tag filter state
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
+
   // Supertile cache — THE source of truth for all tile data.
   const supertileCache = useRef(new SupertileCache()).current
 
@@ -66,6 +70,9 @@ export default function HomeScreen() {
   const mapRef = useRef<MapView>(null)
   const lastFetchTime = useRef(0)
   const hasInitialFetched = useRef(false)
+
+  // Track the last region so we can re-fetch when tags change
+  const lastRegion = useRef<Region | null>(null)
 
   // Modal visibility
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false)
@@ -93,7 +100,7 @@ export default function HomeScreen() {
 
   // Fetch posts for visible area — only fetches supertiles not already cached
   const fetchVisiblePosts = useCallback(
-    async (region: Region) => {
+    async (region: Region, tags?: string[]) => {
       const fetchStartTime = Date.now()
 
       try {
@@ -112,39 +119,49 @@ export default function HomeScreen() {
           return
         }
 
+        // When tags are active, skip the cache optimization and always fetch
+        // fresh data so filtering is accurate.
+        const hasTags = tags && tags.length > 0
+
         // 1. Determine which supertile grid cells are visible
         const viewportBounds = getBoundingBox(region)
         const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
 
         console.log(
-          `🔍 Visible: ${visibleIds.size} supertile cells at grouping ${grouping}`,
+          `🔍 Visible: ${visibleIds.size} supertile cells at grouping ${grouping}${
+            hasTags ? ` (filtered by: ${tags!.join(", ")})` : ""
+          }`,
         )
 
-        // 2. Check which are missing from cache
-        const missingIds = supertileCache.getMissing(visibleIds, grouping)
+        // 2. Check which are missing from cache (skip when filtering by tags)
+        if (!hasTags) {
+          const missingIds = supertileCache.getMissing(visibleIds, grouping)
 
-        if (missingIds.size === 0) {
-          // Everything is cached — just update the display, no fetch needed!
-          console.log(`✅ Full cache hit — ${visibleIds.size} supertiles`)
-          setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+          if (missingIds.size === 0) {
+            // Everything is cached — just update the display, no fetch needed!
+            console.log(`✅ Full cache hit — ${visibleIds.size} supertiles`)
+            setVisibleSupertiles(supertileCache.getVisible(visibleIds))
 
-          // Evict supertiles far from viewport (3× buffer)
-          const evictionBounds = expandRegionToBounds(region, 3.0)
-          const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
-          supertileCache.evictOutside(keepIds)
-          return
+            // Evict supertiles far from viewport (3× buffer)
+            const evictionBounds = expandRegionToBounds(region, 3.0)
+            const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
+            supertileCache.evictOutside(keepIds)
+            return
+          }
+
+          console.log(
+            `📡 Cache miss: ${missingIds.size}/${visibleIds.size} supertiles need fetching`,
+          )
         }
-
-        console.log(
-          `📡 Cache miss: ${missingIds.size}/${visibleIds.size} supertiles need fetching`,
-        )
 
         setIsLoadingPosts(true)
 
         // 3. Show what we have from cache immediately (no blank screen)
-        const cachedTiles = supertileCache.getVisible(visibleIds)
-        if (cachedTiles.length > 0) {
-          setVisibleSupertiles(cachedTiles)
+        if (!hasTags) {
+          const cachedTiles = supertileCache.getVisible(visibleIds)
+          if (cachedTiles.length > 0) {
+            setVisibleSupertiles(cachedTiles)
+          }
         }
 
         // 4. Fetch the snapped bounding box (aligned to supertile grid)
@@ -163,10 +180,15 @@ export default function HomeScreen() {
           )}, ${snappedBounds.maxLng.toFixed(4)}]`,
         )
 
+        const body: Record<string, any> = { ...snappedBounds }
+        if (hasTags) {
+          body.tags = tags
+        }
+
         const response = await fetch(`${API_URL}/api/posts/in-bounds`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify(snappedBounds),
+          body: JSON.stringify(body),
         })
 
         if (!response.ok) {
@@ -186,6 +208,12 @@ export default function HomeScreen() {
 
           // 5. Group into supertiles and add to cache
           const newSupertiles = groupPostsIntoSupertiles(data.posts, grouping)
+
+          if (hasTags) {
+            // When filtering, replace the cache entirely with filtered results
+            supertileCache.clear()
+          }
+
           supertileCache.addSupertiles(newSupertiles, grouping)
 
           // 6. Update display from cache
@@ -214,6 +242,19 @@ export default function HomeScreen() {
     [supertileCache],
   )
 
+  // Re-fetch when tags change
+  useEffect(() => {
+    if (!hasInitialFetched.current) return // don't run before initial fetch
+
+    const region = lastRegion.current
+    if (!region) return
+
+    // Clear cache and re-fetch with new tag filter
+    supertileCache.clear()
+    setVisibleSupertiles([])
+    fetchVisiblePosts(region, selectedTags)
+  }, [selectedTags]) // intentionally only depends on selectedTags
+
   // Fetch nearby posts when location is available - ONLY ONCE
   useEffect(() => {
     if (location && mapRef.current && !hasInitialFetched.current) {
@@ -237,8 +278,9 @@ export default function HomeScreen() {
           const calculatedZoom = getZoomLevel(initialRegion.latitudeDelta)
           console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`)
           setZoom(calculatedZoom)
+          lastRegion.current = initialRegion
 
-          fetchVisiblePosts(initialRegion)
+          fetchVisiblePosts(initialRegion, selectedTags)
         }
       })
     }
@@ -255,6 +297,7 @@ export default function HomeScreen() {
     (region: Region) => {
       const calculatedZoom = getZoomLevel(region.latitudeDelta)
       setZoom(calculatedZoom)
+      lastRegion.current = region
 
       if (isLoadingPosts) {
         console.log("⏭️  Skipping - already loading")
@@ -268,9 +311,9 @@ export default function HomeScreen() {
       }
 
       lastFetchTime.current = now
-      fetchVisiblePosts(region)
+      fetchVisiblePosts(region, selectedTags)
     },
-    [isLoadingPosts, fetchVisiblePosts],
+    [isLoadingPosts, fetchVisiblePosts, selectedTags],
   )
 
   const recenterMap = () => {
@@ -311,6 +354,11 @@ export default function HomeScreen() {
     setSelectedTile(tile)
     setIsTileModalVisible(true)
   }
+
+  // Tag filter change handler
+  const handleTagsChanged = useCallback((tags: string[]) => {
+    setSelectedTags(tags)
+  }, [])
 
   // Apply marker limit to prevent native crashes
   const groupingFactor = getGroupingFactor(zoom)
@@ -380,6 +428,12 @@ export default function HomeScreen() {
         })}
       </MapView>
 
+      {/* Tag filter bar */}
+      <TagFilterBar
+        selectedTags={selectedTags}
+        onTagsChanged={handleTagsChanged}
+      />
+
       {groupingFactor === null && (
         <View style={styles.zoomHint}>
           <Text style={styles.zoomHintText}>Zoom in to see posts</Text>
@@ -390,6 +444,15 @@ export default function HomeScreen() {
         <View style={styles.loadingIndicator}>
           <ActivityIndicator size="small" color="#007AFF" />
           <Text style={styles.loadingText}>Loading posts...</Text>
+        </View>
+      )}
+
+      {/* Active filter indicator */}
+      {selectedTags.length > 0 && (
+        <View style={styles.filterIndicator}>
+          <Text style={styles.filterIndicatorText}>
+            Filtering: {selectedTags.join(", ")}
+          </Text>
         </View>
       )}
 
@@ -485,7 +548,7 @@ const styles = StyleSheet.create({
   },
   loadingIndicator: {
     position: "absolute",
-    top: 100,
+    top: 140,
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
@@ -504,5 +567,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     marginLeft: 8,
+  },
+  filterIndicator: {
+    position: "absolute",
+    bottom: 100,
+    alignSelf: "center",
+    backgroundColor: "rgba(0, 122, 255, 0.9)",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  filterIndicatorText: {
+    color: "white",
+    fontSize: 13,
+    fontWeight: "500",
   },
 })

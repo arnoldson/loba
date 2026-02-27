@@ -16,6 +16,7 @@ interface PostsInBoundsRequest {
   minLng: number
   maxLng: number
   limit?: number
+  tags?: string[]
 }
 
 export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
@@ -24,6 +25,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
   /**
    * POST /api/posts/in-bounds
    * Get posts within a geographic bounding box.
+   * Optionally filter by tags (post must have ANY of the provided tags).
    * Returns PublicPosts (no user_id, with display_name and is_verified).
    */
   fastify.post(
@@ -36,6 +38,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         minLng,
         maxLng,
         limit = 5000,
+        tags,
       } = request.body as PostsInBoundsRequest
 
       // Validation
@@ -51,11 +54,18 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         })
       }
 
+      // Validate tags if provided
+      const cleanTags =
+        tags && Array.isArray(tags) && tags.length > 0
+          ? tags.filter((t) => typeof t === "string" && t.trim().length > 0)
+          : undefined
+
       try {
         const { posts, dbQueryTime } = await postService.getPostsInBounds(
           { minLat, maxLat, minLng, maxLng },
           limit,
           request.userId,
+          cleanTags,
         )
 
         return {
@@ -63,6 +73,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
           posts,
           count: posts.length,
           dbQueryTime,
+          filtered_by_tags: cleanTags || null,
         }
       } catch (error) {
         fastify.log.error(error)
@@ -74,6 +85,32 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
       }
     },
   )
+
+  /**
+   * GET /api/tags/popular
+   * Get the most frequently used tags across all posts.
+   * Used by the frontend to populate the tag filter bar.
+   */
+  fastify.get("/api/tags/popular", async (request, reply) => {
+    try {
+      const { limit } = request.query as { limit?: string }
+      const parsedLimit = Math.min(Number(limit) || 20, 50)
+
+      const tags = await postService.getPopularTags(parsedLimit)
+
+      return {
+        success: true,
+        tags,
+      }
+    } catch (error) {
+      fastify.log.error(error)
+      return reply.status(500).send({
+        success: false,
+        error: "Failed to fetch tags",
+        details: error instanceof Error ? error.message : "Unknown error",
+      })
+    }
+  })
 
   /**
    * GET /api/posts/in-bounds/test
