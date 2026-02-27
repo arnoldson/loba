@@ -9,6 +9,7 @@ import {
   TextInput,
   ActivityIndicator,
   KeyboardAvoidingView,
+  Alert,
   Platform,
 } from "react-native"
 import type { SuperTile } from "@/utils/postGrouping"
@@ -28,7 +29,8 @@ interface TileDetailsModalProps {
   visible: boolean
   tile: SuperTile | null
   onClose: () => void
-  authToken?: string | null // pass the Supabase session token for authed requests
+  authToken?: string | null
+  onPostDeleted?: (postId: string) => void
 }
 
 export function TileDetailsModal({
@@ -36,6 +38,7 @@ export function TileDetailsModal({
   tile,
   onClose,
   authToken,
+  onPostDeleted,
 }: TileDetailsModalProps) {
   // ─── State ──────────────────────────────────────────────────────────
 
@@ -44,22 +47,23 @@ export function TileDetailsModal({
   const [isLoadingComments, setIsLoadingComments] = useState(false)
   const [newComment, setNewComment] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Track deleted post IDs so they disappear from the list immediately
+  const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set())
+
   // ─── Handlers ───────────────────────────────────────────────────────
+
+  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {}
 
   const fetchComments = useCallback(
     async (postId: string) => {
       setIsLoadingComments(true)
       setError(null)
       try {
-        const headers: Record<string, string> = {}
-        if (authToken) {
-          headers["Authorization"] = `Bearer ${authToken}`
-        }
-
         const res = await fetch(`${API_URL}/api/posts/${postId}/comments`, {
-          headers,
+          headers: authHeaders,
         })
         const data = await res.json()
 
@@ -100,6 +104,7 @@ export function TileDetailsModal({
     setComments([])
     setNewComment("")
     setError(null)
+    setDeletedPostIds(new Set())
     onClose()
   }, [onClose])
 
@@ -115,7 +120,7 @@ export function TileDetailsModal({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${authToken}`,
+            ...authHeaders,
           },
           body: JSON.stringify({ content: newComment.trim() }),
         },
@@ -135,11 +140,105 @@ export function TileDetailsModal({
     }
   }, [selectedPost, newComment, authToken])
 
-  // ─── Render helpers ─────────────────────────────────────────────────
+  // ─── Delete handlers ────────────────────────────────────────────────
+
+  const handleDeletePost = useCallback(
+    (post: PublicPost) => {
+      Alert.alert(
+        "Delete post",
+        "This will permanently delete this post and all its comments.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              setIsDeleting(true)
+              try {
+                const res = await fetch(`${API_URL}/api/posts/${post.id}`, {
+                  method: "DELETE",
+                  headers: authHeaders,
+                })
+                const data = await res.json()
+
+                if (data.success) {
+                  // If we're in the detail view, go back to the list
+                  if (selectedPost?.id === post.id) {
+                    setSelectedPost(null)
+                    setComments([])
+                  }
+
+                  // Track locally so it disappears from the list
+                  setDeletedPostIds((prev) => new Set(prev).add(post.id))
+
+                  // Notify parent to remove from cache
+                  onPostDeleted?.(post.id)
+                } else {
+                  Alert.alert("Error", data.error || "Failed to delete post")
+                }
+              } catch (err) {
+                Alert.alert("Error", "Could not connect to server")
+              } finally {
+                setIsDeleting(false)
+              }
+            },
+          },
+        ],
+      )
+    },
+    [authToken, selectedPost, onPostDeleted],
+  )
+
+  const handleDeleteComment = useCallback(
+    (comment: PublicComment) => {
+      if (!selectedPost) return
+
+      Alert.alert("Delete comment", "Are you sure?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const res = await fetch(
+                `${API_URL}/api/posts/${selectedPost.id}/comments/${comment.id}`,
+                {
+                  method: "DELETE",
+                  headers: authHeaders,
+                },
+              )
+              const data = await res.json()
+
+              if (data.success) {
+                setComments((prev) => prev.filter((c) => c.id !== comment.id))
+              } else {
+                Alert.alert("Error", data.error || "Failed to delete comment")
+              }
+            } catch (err) {
+              Alert.alert("Error", "Could not connect to server")
+            }
+          },
+        },
+      ])
+    },
+    [authToken, selectedPost],
+  )
+
+  // ─── Render ─────────────────────────────────────────────────────────
 
   if (!tile) return null
 
   const isPostView = selectedPost !== null
+
+  // Filter out locally deleted posts
+  const visiblePosts = tile.posts.filter((p) => !deletedPostIds.has(p.id))
+
+  // If all posts were deleted, close the modal
+  if (visiblePosts.length === 0 && deletedPostIds.size > 0) {
+    // Use setTimeout to avoid setState during render
+    setTimeout(handleClose, 0)
+    return null
+  }
 
   return (
     <Modal
@@ -170,7 +269,7 @@ export function TileDetailsModal({
             <Text style={styles.title} numberOfLines={1}>
               {isPostView
                 ? `${selectedPost.display_name}'s post`
-                : `${tile.count} ${tile.count === 1 ? "post" : "posts"} in this area`}
+                : `${visiblePosts.length} ${visiblePosts.length === 1 ? "post" : "posts"} in this area`}
             </Text>
 
             <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
@@ -185,9 +284,17 @@ export function TileDetailsModal({
               comments={comments}
               isLoading={isLoadingComments}
               error={error}
+              onDeletePost={handleDeletePost}
+              onDeleteComment={handleDeleteComment}
+              isDeleting={isDeleting}
             />
           ) : (
-            <PostListView posts={tile.posts} onSelectPost={handleSelectPost} />
+            <PostListView
+              posts={visiblePosts}
+              onSelectPost={handleSelectPost}
+              onDeletePost={handleDeletePost}
+              isDeleting={isDeleting}
+            />
           )}
 
           {/* ─── Comment input (only when viewing a post) ────────── */}
@@ -242,9 +349,13 @@ export function TileDetailsModal({
 function PostListView({
   posts,
   onSelectPost,
+  onDeletePost,
+  isDeleting,
 }: {
   posts: PublicPost[]
   onSelectPost: (post: PublicPost) => void
+  onDeletePost: (post: PublicPost) => void
+  isDeleting: boolean
 }) {
   return (
     <ScrollView style={styles.postsList}>
@@ -264,6 +375,22 @@ function PostListView({
               <View style={styles.verifiedBadge}>
                 <Text style={styles.verifiedText}>✓</Text>
               </View>
+            )}
+            {post.is_own && <Text style={styles.ownLabel}>you</Text>}
+
+            {/* Delete button for own posts */}
+            {post.is_own && (
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={(e) => {
+                  e.stopPropagation?.()
+                  onDeletePost(post)
+                }}
+                disabled={isDeleting}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.deleteButtonText}>🗑</Text>
+              </TouchableOpacity>
             )}
           </View>
 
@@ -304,11 +431,17 @@ function PostDetailView({
   comments,
   isLoading,
   error,
+  onDeletePost,
+  onDeleteComment,
+  isDeleting,
 }: {
   post: PublicPost
   comments: PublicComment[]
   isLoading: boolean
   error: string | null
+  onDeletePost: (post: PublicPost) => void
+  onDeleteComment: (comment: PublicComment) => void
+  isDeleting: boolean
 }) {
   return (
     <ScrollView style={styles.postsList}>
@@ -322,6 +455,19 @@ function PostDetailView({
             <View style={styles.verifiedBadge}>
               <Text style={styles.verifiedText}>✓</Text>
             </View>
+          )}
+          {post.is_own && <Text style={styles.ownLabel}>you</Text>}
+
+          {/* Delete button for own posts */}
+          {post.is_own && (
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={() => onDeletePost(post)}
+              disabled={isDeleting}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={styles.deleteButtonText}>🗑</Text>
+            </TouchableOpacity>
           )}
         </View>
 
@@ -369,6 +515,17 @@ function PostDetailView({
                   </View>
                 )}
                 {comment.is_own && <Text style={styles.ownLabel}>you</Text>}
+
+                {/* Delete button for own comments */}
+                {comment.is_own && (
+                  <TouchableOpacity
+                    style={styles.deleteButtonSm}
+                    onPress={() => onDeleteComment(comment)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Text style={styles.deleteButtonTextSm}>🗑</Text>
+                  </TouchableOpacity>
+                )}
               </View>
               <Text style={styles.commentContent}>{comment.content}</Text>
               <Text style={styles.commentTimestamp}>
@@ -496,6 +653,26 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "bold",
   },
+  ownLabel: {
+    fontSize: 11,
+    color: "#007AFF",
+    fontWeight: "600",
+    marginLeft: 6,
+  },
+  deleteButton: {
+    marginLeft: "auto",
+    padding: 4,
+  },
+  deleteButtonText: {
+    fontSize: 14,
+  },
+  deleteButtonSm: {
+    marginLeft: "auto",
+    padding: 2,
+  },
+  deleteButtonTextSm: {
+    fontSize: 12,
+  },
   postContent: {
     fontSize: 16,
     lineHeight: 22,
@@ -586,12 +763,6 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 8,
     fontWeight: "bold",
-  },
-  ownLabel: {
-    fontSize: 11,
-    color: "#007AFF",
-    fontWeight: "600",
-    marginLeft: 6,
   },
   commentContent: {
     fontSize: 15,

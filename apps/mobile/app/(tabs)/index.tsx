@@ -71,7 +71,7 @@ export default function HomeScreen() {
   const lastFetchTime = useRef(0)
   const hasInitialFetched = useRef(false)
 
-  // Track the last region so we can re-fetch when tags change
+  // Track the last region so we can re-fetch when tags change or posts are deleted
   const lastRegion = useRef<Region | null>(null)
 
   // Modal visibility
@@ -350,6 +350,19 @@ export default function HomeScreen() {
     [zoom, location, supertileCache],
   )
 
+  // Called by TileDetailsModal after a post is deleted
+  const handlePostDeleted = useCallback(
+    (postId: string) => {
+      // Clear cache and re-fetch to get accurate marker state
+      supertileCache.clear()
+      const region = lastRegion.current
+      if (region) {
+        fetchVisiblePosts(region, selectedTags)
+      }
+    },
+    [supertileCache, fetchVisiblePosts, selectedTags],
+  )
+
   const handleTilePress = (tile: SuperTile) => {
     setSelectedTile(tile)
     setIsTileModalVisible(true)
@@ -482,6 +495,7 @@ export default function HomeScreen() {
         tile={selectedTile}
         onClose={() => setIsTileModalVisible(false)}
         authToken={session?.access_token ?? null}
+        onPostDeleted={handlePostDeleted}
       />
     </View>
   )

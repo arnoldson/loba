@@ -36,6 +36,7 @@ export type UserProfile = {
 export type PublicPost = Omit<Post, "user_id"> & {
   display_name: string
   is_verified: boolean
+  is_own: boolean
 }
 
 /** What the post author sees. Includes everything plus display name. */

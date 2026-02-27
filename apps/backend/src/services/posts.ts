@@ -42,6 +42,30 @@ export class PostService {
     return this.toOwnPost(post, profile)
   }
 
+  // ─── Post deletion ──────────────────────────────────────────────────
+
+  /**
+   * Delete a post. Only the post author can delete it.
+   * Comments are cascade-deleted by the DB foreign key constraint.
+   */
+  async deletePost(postId: string, userId: string): Promise<void> {
+    const post = await db
+      .selectFrom("posts")
+      .select(["id", "user_id"])
+      .where("id", "=", postId)
+      .executeTakeFirst()
+
+    if (!post) {
+      throw new Error("Post not found")
+    }
+
+    if (post.user_id !== userId) {
+      throw new Error("Not authorized to delete this post")
+    }
+
+    await db.deleteFrom("posts").where("id", "=", postId).execute()
+  }
+
   // ─── Public queries (for map display) ───────────────────────────────
 
   /**
@@ -171,6 +195,7 @@ export class PostService {
    * - Strips user_id
    * - Adds deterministic display_name
    * - Adds is_verified badge
+   * - Adds is_own flag when requestingUserId matches
    *
    * Batches profile lookups to avoid N+1 queries.
    */
@@ -192,6 +217,7 @@ export class PostService {
         ? generateDisplayName(post.user_id, post.id)
         : "Anonymous"
       const isVerified = profile?.verification_status === "verified"
+      const isOwn = !!requestingUserId && post.user_id === requestingUserId
 
       // Strip user_id from the public response
       const { user_id, ...rest } = post
@@ -200,6 +226,7 @@ export class PostService {
         ...rest,
         display_name: displayName,
         is_verified: isVerified,
+        is_own: isOwn,
       }
     })
   }
