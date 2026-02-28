@@ -1,6 +1,15 @@
 import { db } from "../db/index.js"
 import { generateDisplayName } from "../utils/displayName.js"
-import type { Comment, PublicComment, UserProfile } from "@loba/shared"
+import type { PublicComment, UserProfile } from "@loba/shared"
+
+// Internal type matching what Kysely returns from the comments table
+interface CommentRow {
+  id: string
+  post_id: string
+  user_id: string
+  content: string
+  created_at: string
+}
 
 export class CommentService {
   // ─── Create a comment ───────────────────────────────────────────────
@@ -36,7 +45,7 @@ export class CommentService {
 
     const profile = await this.getProfile(userId)
 
-    return this.toPublicComment(comment, profile, userId)
+    return this.toPublicComment(comment as CommentRow, profile, userId)
   }
 
   // ─── Fetch comments for a post ─────────────────────────────────────
@@ -58,7 +67,7 @@ export class CommentService {
       .limit(limit)
       .execute()
 
-    return this.toPublicComments(comments, requestingUserId)
+    return this.toPublicComments(comments as CommentRow[], requestingUserId)
   }
 
   // ─── Delete a comment ──────────────────────────────────────────────
@@ -86,23 +95,12 @@ export class CommentService {
 
   // ─── Comment transformation ────────────────────────────────────────
 
-  /**
-   * Convert raw DB comments to PublicComments.
-   * - Strips user_id
-   * - Adds display_name (deterministic from user_id + post_id)
-   *   so a commenter has the SAME name throughout a post's thread
-   * - Adds is_verified badge
-   * - Adds is_own flag
-   *
-   * Batches profile lookups to avoid N+1 queries.
-   */
   private async toPublicComments(
-    comments: Comment[],
+    comments: CommentRow[],
     requestingUserId?: string,
   ): Promise<PublicComment[]> {
     if (comments.length === 0) return []
 
-    // Batch-fetch profiles for all unique commenters
     const userIds = [...new Set(comments.map((c) => c.user_id))]
     const profileMap = await this.getProfiles(userIds)
 
@@ -115,25 +113,16 @@ export class CommentService {
     })
   }
 
-  /**
-   * Convert a single comment to a PublicComment.
-   * Display name is derived from user_id + POST_id (not comment id),
-   * so a user has the same name throughout a post's entire thread.
-   */
   private toPublicComment(
-    comment: Comment,
+    comment: CommentRow,
     profile: UserProfile | undefined,
     requestingUserId?: string,
   ): PublicComment {
-    // Key insight: display name uses post_id, not comment_id.
-    // This means the same user always appears as the same name
-    // within a single post's comment thread.
     const displayName = generateDisplayName(comment.user_id, comment.post_id)
     const isVerified = profile?.verification_status === "verified"
     const isOwn = comment.user_id === requestingUserId
 
-    // Strip user_id from the response
-    const { user_id, ...rest } = comment
+    const { user_id: _uid, ...rest } = comment
 
     return {
       ...rest,
@@ -152,7 +141,7 @@ export class CommentService {
       .where("user_id", "=", userId)
       .executeTakeFirst()
 
-    return profile || undefined
+    return (profile as UserProfile | undefined) || undefined
   }
 
   private async getProfiles(
@@ -168,7 +157,7 @@ export class CommentService {
 
     const map = new Map<string, UserProfile>()
     for (const p of profiles) {
-      map.set(p.user_id, p)
+      map.set(p.user_id, p as UserProfile)
     }
     return map
   }

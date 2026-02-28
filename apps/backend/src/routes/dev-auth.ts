@@ -19,10 +19,10 @@
  *     -H "Authorization: Bearer <token>"
  */
 
-import { FastifyPluginAsync } from "fastify";
-import { supabaseAdmin } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
-import { db } from "../db/index.js";
+import { FastifyPluginAsync } from "fastify"
+import { supabaseAdmin } from "../middleware/auth.js"
+import { requireAuth } from "../middleware/auth.js"
+import { db } from "../db/index.js"
 
 export const devAuthRoutes: FastifyPluginAsync = async (fastify) => {
   /**
@@ -34,29 +34,29 @@ export const devAuthRoutes: FastifyPluginAsync = async (fastify) => {
    */
   fastify.post("/api/dev/login", async (request, reply) => {
     const { email, password } = request.body as {
-      email: string;
-      password: string;
-    };
+      email: string
+      password: string
+    }
 
     if (!email || !password) {
       return reply.status(400).send({
         success: false,
         error: "email and password are required",
-      });
+      })
     }
 
     // Try to sign in first
     const { data: signInData, error: signInError } =
-      await supabaseAdmin.auth.signInWithPassword({ email, password });
+      await supabaseAdmin.auth.signInWithPassword({ email, password })
 
     if (signInData?.session) {
-      console.log(`🔑 Dev login: ${email} (existing user)`);
+      console.log(`🔑 Dev login: ${email} (existing user)`)
       return {
         success: true,
         token: signInData.session.access_token,
         refresh_token: signInData.session.refresh_token,
         user_id: signInData.user?.id,
-      };
+      }
     }
 
     // User doesn't exist — create them
@@ -65,37 +65,37 @@ export const devAuthRoutes: FastifyPluginAsync = async (fastify) => {
         email,
         password,
         email_confirm: true, // Skip email verification for dev
-      });
+      })
 
     if (signUpError || !signUpData?.user) {
-      console.error("Dev signup error:", signUpError);
+      console.error("Dev signup error:", signUpError)
       return reply.status(500).send({
         success: false,
         error: signUpError?.message || "Failed to create test user",
-      });
+      })
     }
 
     // Now sign in the new user to get a session token
     const { data: newSession, error: sessionError } =
-      await supabaseAdmin.auth.signInWithPassword({ email, password });
+      await supabaseAdmin.auth.signInWithPassword({ email, password })
 
     if (sessionError || !newSession?.session) {
-      console.error("Dev session error:", sessionError);
+      console.error("Dev session error:", sessionError)
       return reply.status(500).send({
         success: false,
         error: "User created but failed to get session",
-      });
+      })
     }
 
-    console.log(`🔑 Dev login: ${email} (new user created)`);
+    console.log(`🔑 Dev login: ${email} (new user created)`)
     return {
       success: true,
       token: newSession.session.access_token,
       refresh_token: newSession.session.refresh_token,
       user_id: newSession.user?.id,
       created: true,
-    };
-  });
+    }
+  })
 
   /**
    * GET /api/dev/me
@@ -106,22 +106,22 @@ export const devAuthRoutes: FastifyPluginAsync = async (fastify) => {
     "/api/dev/me",
     { preHandler: [requireAuth] },
     async (request, reply) => {
-      const userId = request.userId!;
+      const userId = request.userId!
 
       const profile = await db
         .selectFrom("user_profiles")
         .selectAll()
         .where("user_id", "=", userId)
-        .executeTakeFirst();
+        .executeTakeFirst()
 
       return {
         success: true,
         user_id: userId,
         verification_status: profile?.verification_status || "unverified",
         profile_exists: !!profile,
-      };
-    }
-  );
+      }
+    },
+  )
 
   /**
    * POST /api/dev/verify
@@ -134,33 +134,37 @@ export const devAuthRoutes: FastifyPluginAsync = async (fastify) => {
     "/api/dev/verify",
     { preHandler: [requireAuth] },
     async (request, reply) => {
-      const userId = request.userId!;
-      const { status } = request.body as { status: string };
+      const userId = request.userId!
+      const { status } = request.body as { status: string }
 
-      const validStatuses = ["unverified", "pending", "verified", "rejected"];
+      const validStatuses = ["unverified", "pending", "verified", "rejected"]
       if (!validStatuses.includes(status)) {
         return reply.status(400).send({
           success: false,
           error: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
-        });
+        })
       }
 
       await db
         .updateTable("user_profiles")
         .set({
-          verification_status: status,
+          verification_status: status as
+            | "unverified"
+            | "pending"
+            | "verified"
+            | "rejected",
           verified_at: status === "verified" ? new Date().toISOString() : null,
           updated_at: new Date().toISOString(),
         })
         .where("user_id", "=", userId)
-        .execute();
+        .execute()
 
-      console.log(`✅ Dev verify: ${userId} → ${status}`);
+      console.log(`✅ Dev verify: ${userId} → ${status}`)
       return {
         success: true,
         user_id: userId,
         verification_status: status,
-      };
-    }
-  );
-};
+      }
+    },
+  )
+}

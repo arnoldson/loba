@@ -99,6 +99,9 @@ export default function HomeScreen() {
   }, [])
 
   // Fetch posts for visible area — only fetches supertiles not already cached
+  // Omitting getAuthHeaders and isLoadingPosts from deps is intentional:
+  // - isLoadingPosts: checked as a guard inside the callback, not a reactive dependency
+  // - getAuthHeaders: stable from useAuth, adding it causes unnecessary re-renders
   const fetchVisiblePosts = useCallback(
     async (region: Region, tags?: string[]) => {
       const fetchStartTime = Date.now()
@@ -165,7 +168,6 @@ export default function HomeScreen() {
         }
 
         // 4. Fetch the snapped bounding box (aligned to supertile grid)
-        //    This ensures we get COMPLETE supertiles at the edges
         const snappedBounds = snapBoundsToGrid(viewportBounds, grouping)
         const area = getVisibleAreaMeters(region)
 
@@ -210,7 +212,6 @@ export default function HomeScreen() {
           const newSupertiles = groupPostsIntoSupertiles(data.posts, grouping)
 
           if (hasTags) {
-            // When filtering, replace the cache entirely with filtered results
             supertileCache.clear()
           }
 
@@ -228,7 +229,6 @@ export default function HomeScreen() {
         }
       } catch (error) {
         console.error("❌ Error fetching posts:", error)
-        // On error, show whatever is cached — don't blank the map
         const grouping = getGroupingFactor(getZoomLevel(region.latitudeDelta))
         if (grouping) {
           const viewportBounds = getBoundingBox(region)
@@ -239,23 +239,27 @@ export default function HomeScreen() {
         setIsLoadingPosts(false)
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [supertileCache],
   )
 
-  // Re-fetch when tags change
+  // Re-fetch when tags change.
+  // Intentionally only depends on selectedTags — fetchVisiblePosts and supertileCache
+  // are stable refs that don't need to trigger this effect.
   useEffect(() => {
-    if (!hasInitialFetched.current) return // don't run before initial fetch
+    if (!hasInitialFetched.current) return
 
     const region = lastRegion.current
     if (!region) return
 
-    // Clear cache and re-fetch with new tag filter
     supertileCache.clear()
     setVisibleSupertiles([])
     fetchVisiblePosts(region, selectedTags)
-  }, [selectedTags]) // intentionally only depends on selectedTags
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTags])
 
-  // Fetch nearby posts when location is available - ONLY ONCE
+  // Fetch nearby posts when location is available - ONLY ONCE.
+  // Intentionally omits selectedTags — initial fetch should always be unfiltered.
   useEffect(() => {
     if (location && mapRef.current && !hasInitialFetched.current) {
       hasInitialFetched.current = true
@@ -284,6 +288,7 @@ export default function HomeScreen() {
         }
       })
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location, fetchVisiblePosts])
 
   // Handle map region changes while panning (lightweight - just update zoom)
@@ -352,8 +357,7 @@ export default function HomeScreen() {
 
   // Called by TileDetailsModal after a post is deleted
   const handlePostDeleted = useCallback(
-    (postId: string) => {
-      // Clear cache and re-fetch to get accurate marker state
+    (_postId: string) => {
       supertileCache.clear()
       const region = lastRegion.current
       if (region) {
@@ -368,7 +372,6 @@ export default function HomeScreen() {
     setIsTileModalVisible(true)
   }
 
-  // Tag filter change handler
   const handleTagsChanged = useCallback((tags: string[]) => {
     setSelectedTags(tags)
   }, [])
@@ -460,7 +463,6 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Active filter indicator */}
       {selectedTags.length > 0 && (
         <View style={styles.filterIndicator}>
           <Text style={styles.filterIndicatorText}>

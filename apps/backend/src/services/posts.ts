@@ -13,14 +13,11 @@ import type {
 export class PostService {
   // ─── Post creation ──────────────────────────────────────────────────
 
-  /**
-   * Create a new post linked to an authenticated user.
-   */
   async createPost(data: CreatePostRequest, userId: string): Promise<OwnPost> {
     const tileId = getTileId(data.latitude, data.longitude)
     const postId = crypto.randomUUID()
 
-    const post = await db
+    const row = await db
       .insertInto("posts")
       .values({
         id: postId,
@@ -39,15 +36,11 @@ export class PostService {
 
     const profile = await this.getProfile(userId)
 
-    return this.toOwnPost(post, profile)
+    return this.toOwnPost(row as unknown as Post, profile)
   }
 
   // ─── Post deletion ──────────────────────────────────────────────────
 
-  /**
-   * Delete a post. Only the post author can delete it.
-   * Comments are cascade-deleted by the DB foreign key constraint.
-   */
   async deletePost(postId: string, userId: string): Promise<void> {
     const post = await db
       .selectFrom("posts")
@@ -68,10 +61,6 @@ export class PostService {
 
   // ─── Public queries (for map display) ───────────────────────────────
 
-  /**
-   * Get posts by tile IDs, returned as PublicPosts (no user_id exposed).
-   * If `requestingUserId` is provided, the caller's own posts are marked.
-   */
   async getPostsByTiles(
     tileIds: string[],
     limit: number = 50,
@@ -85,12 +74,9 @@ export class PostService {
       .limit(limit)
       .execute()
 
-    return this.toPublicPosts(posts, requestingUserId)
+    return this.toPublicPosts(posts as unknown as Post[], requestingUserId)
   }
 
-  /**
-   * Get a single post by ID, returned as a PublicPost.
-   */
   async getPostById(
     id: string,
     requestingUserId?: string,
@@ -103,15 +89,15 @@ export class PostService {
 
     if (!post) return null
 
-    const posts = await this.toPublicPosts([post], requestingUserId)
+    const posts = await this.toPublicPosts(
+      [post as unknown as Post],
+      requestingUserId,
+    )
     return posts[0]
   }
 
   // ─── Private queries (for the authenticated user) ──────────────────
 
-  /**
-   * Get all posts by the authenticated user ("My Posts" view).
-   */
   async getMyPosts(userId: string, limit: number = 100): Promise<OwnPost[]> {
     const posts = await db
       .selectFrom("posts")
@@ -123,16 +109,13 @@ export class PostService {
 
     const profile = await this.getProfile(userId)
 
-    return posts.map((post) => this.toOwnPost(post, profile))
+    return (posts as unknown as Post[]).map((post) =>
+      this.toOwnPost(post, profile),
+    )
   }
 
   // ─── Spatial queries (for map display) ────────────────────────────
 
-  /**
-   * Get posts within a geographic bounding box using PostGIS.
-   * Optionally filter by tags (array overlap — post has ANY of the selected tags).
-   * Returns PublicPosts with display names and verification badges.
-   */
   async getPostsInBounds(
     bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
     limit: number = 5000,
@@ -148,7 +131,6 @@ export class PostService {
         sql<boolean>`location && ST_MakeEnvelope(${bounds.minLng}, ${bounds.minLat}, ${bounds.maxLng}, ${bounds.maxLat}, 4326)`,
       )
 
-    // Filter by tags if provided (array overlap — post has ANY of the selected tags)
     if (tags && tags.length > 0) {
       query = query.where(
         sql<boolean>`tags && ARRAY[${sql.join(tags.map((t) => sql`${t}`))}]::text[]`,
@@ -159,17 +141,16 @@ export class PostService {
 
     const dbQueryTime = Date.now() - startTime
 
-    const publicPosts = await this.toPublicPosts(posts, requestingUserId)
+    const publicPosts = await this.toPublicPosts(
+      posts as unknown as Post[],
+      requestingUserId,
+    )
 
     return { posts: publicPosts, dbQueryTime }
   }
 
   // ─── Tag queries ──────────────────────────────────────────────────
 
-  /**
-   * Get the most popular tags across all posts.
-   * Unnests the tags array and counts occurrences.
-   */
   async getPopularTags(
     limit: number = 20,
   ): Promise<{ tag: string; count: number }[]> {
@@ -190,22 +171,12 @@ export class PostService {
 
   // ─── Post transformation ───────────────────────────────────────────
 
-  /**
-   * Convert raw DB posts to PublicPosts.
-   * - Strips user_id
-   * - Adds deterministic display_name
-   * - Adds is_verified badge
-   * - Adds is_own flag when requestingUserId matches
-   *
-   * Batches profile lookups to avoid N+1 queries.
-   */
   private async toPublicPosts(
     posts: Post[],
     requestingUserId?: string,
   ): Promise<PublicPost[]> {
     if (posts.length === 0) return []
 
-    // Collect unique user_ids and batch-fetch their verification status
     const userIds = [
       ...new Set(posts.map((p) => p.user_id).filter(Boolean)),
     ] as string[]
@@ -219,8 +190,7 @@ export class PostService {
       const isVerified = profile?.verification_status === "verified"
       const isOwn = !!requestingUserId && post.user_id === requestingUserId
 
-      // Strip user_id from the public response
-      const { user_id, ...rest } = post
+      const { user_id: _uid, ...rest } = post
 
       return {
         ...rest,
@@ -231,10 +201,6 @@ export class PostService {
     })
   }
 
-  /**
-   * Convert a raw DB post to an OwnPost (for the author).
-   * Keeps user_id since the author is allowed to see it.
-   */
   private toOwnPost(post: Post, profile: UserProfile | undefined): OwnPost {
     return {
       ...post,
@@ -248,9 +214,6 @@ export class PostService {
 
   // ─── Profile lookups ───────────────────────────────────────────────
 
-  /**
-   * Get a single user's profile.
-   */
   private async getProfile(userId: string): Promise<UserProfile | undefined> {
     const profile = await db
       .selectFrom("user_profiles")
@@ -258,13 +221,9 @@ export class PostService {
       .where("user_id", "=", userId)
       .executeTakeFirst()
 
-    return profile || undefined
+    return (profile as UserProfile | undefined) || undefined
   }
 
-  /**
-   * Batch-fetch profiles for multiple user IDs.
-   * Returns a Map for O(1) lookup per post.
-   */
   private async getProfiles(
     userIds: string[],
   ): Promise<Map<string, UserProfile>> {
@@ -278,7 +237,7 @@ export class PostService {
 
     const map = new Map<string, UserProfile>()
     for (const p of profiles) {
-      map.set(p.user_id, p)
+      map.set(p.user_id, p as UserProfile)
     }
     return map
   }

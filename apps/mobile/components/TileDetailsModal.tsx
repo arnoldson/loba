@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react"
+import React, { useState, useCallback, useMemo } from "react"
 import {
   View,
   Text,
@@ -53,9 +53,13 @@ export function TileDetailsModal({
   // Track deleted post IDs so they disappear from the list immediately
   const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set())
 
-  // ─── Handlers ───────────────────────────────────────────────────────
+  // Stable auth headers object — only changes when token changes
+  const authHeaders = useMemo<Record<string, string>>(
+    () => (authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    [authToken],
+  )
 
-  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {}
+  // ─── Handlers ───────────────────────────────────────────────────────
 
   const fetchComments = useCallback(
     async (postId: string) => {
@@ -72,13 +76,13 @@ export function TileDetailsModal({
         } else {
           setError(data.error || "Failed to load comments")
         }
-      } catch (err) {
+      } catch {
         setError("Could not connect to server")
       } finally {
         setIsLoadingComments(false)
       }
     },
-    [authToken],
+    [authHeaders],
   )
 
   const handleSelectPost = useCallback(
@@ -133,12 +137,12 @@ export function TileDetailsModal({
       } else {
         setError(data.error || "Failed to post comment")
       }
-    } catch (err) {
+    } catch {
       setError("Could not connect to server")
     } finally {
       setIsSubmitting(false)
     }
-  }, [selectedPost, newComment, authToken])
+  }, [selectedPost, newComment, authToken, authHeaders])
 
   // ─── Delete handlers ────────────────────────────────────────────────
 
@@ -162,21 +166,17 @@ export function TileDetailsModal({
                 const data = await res.json()
 
                 if (data.success) {
-                  // If we're in the detail view, go back to the list
                   if (selectedPost?.id === post.id) {
                     setSelectedPost(null)
                     setComments([])
                   }
 
-                  // Track locally so it disappears from the list
                   setDeletedPostIds((prev) => new Set(prev).add(post.id))
-
-                  // Notify parent to remove from cache
                   onPostDeleted?.(post.id)
                 } else {
                   Alert.alert("Error", data.error || "Failed to delete post")
                 }
-              } catch (err) {
+              } catch {
                 Alert.alert("Error", "Could not connect to server")
               } finally {
                 setIsDeleting(false)
@@ -186,7 +186,7 @@ export function TileDetailsModal({
         ],
       )
     },
-    [authToken, selectedPost, onPostDeleted],
+    [authHeaders, selectedPost, onPostDeleted],
   )
 
   const handleDeleteComment = useCallback(
@@ -214,14 +214,14 @@ export function TileDetailsModal({
               } else {
                 Alert.alert("Error", data.error || "Failed to delete comment")
               }
-            } catch (err) {
+            } catch {
               Alert.alert("Error", "Could not connect to server")
             }
           },
         },
       ])
     },
-    [authToken, selectedPost],
+    [authHeaders, selectedPost],
   )
 
   // ─── Render ─────────────────────────────────────────────────────────
@@ -235,7 +235,6 @@ export function TileDetailsModal({
 
   // If all posts were deleted, close the modal
   if (visiblePosts.length === 0 && deletedPostIds.size > 0) {
-    // Use setTimeout to avoid setState during render
     setTimeout(handleClose, 0)
     return null
   }
@@ -258,7 +257,7 @@ export function TileDetailsModal({
         />
 
         <View style={styles.modalContent}>
-          {/* ─── Header ──────────────────────────────────────────── */}
+          {/* Header */}
           <View style={styles.header}>
             {isPostView ? (
               <TouchableOpacity onPress={handleBack} style={styles.backButton}>
@@ -277,7 +276,7 @@ export function TileDetailsModal({
             </TouchableOpacity>
           </View>
 
-          {/* ─── Body: post list OR comment thread ───────────────── */}
+          {/* Body: post list OR comment thread */}
           {isPostView ? (
             <PostDetailView
               post={selectedPost}
@@ -297,7 +296,7 @@ export function TileDetailsModal({
             />
           )}
 
-          {/* ─── Comment input (only when viewing a post) ────────── */}
+          {/* Comment input (only when viewing a post) */}
           {isPostView && authToken && (
             <View style={styles.commentInputContainer}>
               <TextInput
@@ -345,7 +344,6 @@ export function TileDetailsModal({
 // Sub-components
 // ═══════════════════════════════════════════════════════════════════════
 
-/** List of posts in a tile — the initial view when tapping a marker. */
 function PostListView({
   posts,
   onSelectPost,
@@ -366,7 +364,6 @@ function PostListView({
           onPress={() => onSelectPost(post)}
           activeOpacity={0.7}
         >
-          {/* Author line */}
           <View style={styles.authorRow}>
             <Text style={styles.displayName}>
               {post.display_name || "Anonymous"}
@@ -377,15 +374,10 @@ function PostListView({
               </View>
             )}
             {post.is_own && <Text style={styles.ownLabel}>you</Text>}
-
-            {/* Delete button for own posts */}
             {post.is_own && (
               <TouchableOpacity
                 style={styles.deleteButton}
-                onPress={(e) => {
-                  e.stopPropagation?.()
-                  onDeletePost(post)
-                }}
+                onPress={() => onDeletePost(post)}
                 disabled={isDeleting}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
@@ -408,7 +400,6 @@ function PostListView({
             </View>
           )}
 
-          {/* Footer: timestamp + comment count */}
           <View style={styles.postFooter}>
             <Text style={styles.timestamp}>
               {formatTimestamp(post.created_at)}
@@ -425,7 +416,6 @@ function PostListView({
   )
 }
 
-/** Single post detail with its comment thread. */
 function PostDetailView({
   post,
   comments,
@@ -445,7 +435,6 @@ function PostDetailView({
 }) {
   return (
     <ScrollView style={styles.postsList}>
-      {/* ─── The original post ───────────────────────────────────── */}
       <View style={styles.detailPost}>
         <View style={styles.authorRow}>
           <Text style={styles.displayName}>
@@ -457,8 +446,6 @@ function PostDetailView({
             </View>
           )}
           {post.is_own && <Text style={styles.ownLabel}>you</Text>}
-
-          {/* Delete button for own posts */}
           {post.is_own && (
             <TouchableOpacity
               style={styles.deleteButton}
@@ -486,7 +473,6 @@ function PostDetailView({
         <Text style={styles.timestamp}>{formatTimestamp(post.created_at)}</Text>
       </View>
 
-      {/* ─── Comments section ────────────────────────────────────── */}
       <View style={styles.commentsSection}>
         <Text style={styles.commentsHeader}>
           {isLoading
@@ -515,8 +501,6 @@ function PostDetailView({
                   </View>
                 )}
                 {comment.is_own && <Text style={styles.ownLabel}>you</Text>}
-
-                {/* Delete button for own comments */}
                 {comment.is_own && (
                   <TouchableOpacity
                     style={styles.deleteButtonSm}
@@ -621,8 +605,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: "#666",
   },
-
-  // ─── Post list ──────────────────────────────────────────────────
   postsList: {
     padding: 20,
   },
@@ -713,8 +695,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#f0f0f0",
     marginTop: 15,
   },
-
-  // ─── Post detail view ──────────────────────────────────────────
   detailPost: {
     marginBottom: 16,
     paddingBottom: 16,
@@ -726,8 +706,6 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     marginBottom: 10,
   },
-
-  // ─── Comments section ──────────────────────────────────────────
   commentsSection: {
     marginTop: 4,
   },
@@ -787,8 +765,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 8,
   },
-
-  // ─── Comment input ─────────────────────────────────────────────
   commentInputContainer: {
     flexDirection: "row",
     alignItems: "flex-end",
