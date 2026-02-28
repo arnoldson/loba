@@ -54,10 +54,10 @@ export function TileDetailsModal({
   const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set())
 
   // Stable auth headers object — only changes when token changes
-  const authHeaders = useMemo<Record<string, string>>(
+  const authHeaders = useMemo(
     () => (authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     [authToken],
-  )
+  ) as Record<string, string>
 
   // ─── Handlers ───────────────────────────────────────────────────────
 
