@@ -1,7 +1,7 @@
-import { useEffect } from "react";
-import { ActivityIndicator, View } from "react-native";
-import { Stack, useRouter, useSegments } from "expo-router";
-import { AuthProvider, useAuth } from "@/utils/auth";
+import { useEffect } from "react"
+import { ActivityIndicator, View } from "react-native"
+import { Stack, useRouter, useSegments } from "expo-router"
+import { AuthProvider, useAuth } from "@/utils/auth"
 
 /**
  * Handles auth-based navigation.
@@ -9,30 +9,37 @@ import { AuthProvider, useAuth } from "@/utils/auth";
  * - Has session but on /login → redirect to /(tabs)
  */
 function AuthGate() {
-  const { session, isLoading } = useAuth();
-  const segments = useSegments();
-  const router = useRouter();
+  const { session, isLoading } = useAuth()
+  const segments = useSegments()
+  const router = useRouter()
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading) return
 
-    const onLoginScreen = segments[0] === "login";
+    const onLoginScreen = segments[0] === "login"
 
     if (!session && !onLoginScreen) {
       // Not logged in and not on login screen → go to login
-      router.replace("/login");
+      router.replace("/login")
     } else if (session && onLoginScreen) {
       // Logged in but still on login screen → go to app
-      router.replace("/(tabs)");
+      router.replace("/(tabs)")
     }
-  }, [session, isLoading, segments]);
+  }, [session, isLoading, segments, router])
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#fff" }}>
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#fff",
+        }}
+      >
         <ActivityIndicator size="large" color="#007AFF" />
       </View>
-    );
+    )
   }
 
   return (
@@ -40,7 +47,7 @@ function AuthGate() {
       <Stack.Screen name="login" />
       <Stack.Screen name="(tabs)" />
     </Stack>
-  );
+  )
 }
 
 export default function RootLayout() {
@@ -48,5 +55,5 @@ export default function RootLayout() {
     <AuthProvider>
       <AuthGate />
     </AuthProvider>
-  );
+  )
 }
