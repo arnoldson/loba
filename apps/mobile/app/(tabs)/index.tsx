@@ -498,6 +498,14 @@ export default function HomeScreen() {
         onClose={() => setIsTileModalVisible(false)}
         authToken={session?.access_token ?? null}
         onPostDeleted={handlePostDeleted}
+        userLocation={
+          location
+            ? {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+              }
+            : null
+        }
       />
     </View>
   )
