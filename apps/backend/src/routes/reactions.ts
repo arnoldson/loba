@@ -1,59 +1,59 @@
 /**
- * Post reaction endpoints (like/dislike).
+ * Post reaction endpoints (upvote/downvote).
  * All reactions require authentication and physical proximity to the post.
  */
 
-import type { FastifyInstance } from "fastify";
-import { PostService } from "../services/posts.js";
-import { requireAuth } from "../middleware/auth.js";
-import type { ReactToPostRequest, ReactToPostResponse } from "@loba/shared";
+import type { FastifyInstance } from "fastify"
+import { PostService } from "../services/posts.js"
+import { requireAuth } from "../middleware/auth.js"
+import type { ReactToPostRequest, ReactToPostResponse } from "@loba/shared"
 
 export async function reactionRoutes(fastify: FastifyInstance) {
-  const postService = new PostService();
+  const postService = new PostService()
 
   /**
    * POST /posts/:id/react
    *
-   * Toggle a like or dislike on a post.
+   * Toggle an upvote or downvote on a post.
    * - Same reaction twice → removes it (toggle off)
    * - Different reaction → switches it
-   * - Likes extend the post's TTL by 2 hours (capped at 7 days)
+   * - Upvotes extend the post's TTL by 2 hours (capped at 7 days)
    * - User must be within 50m of the post
    */
   fastify.post<{
-    Params: { id: string };
-    Body: ReactToPostRequest;
-    Reply: ReactToPostResponse;
+    Params: { id: string }
+    Body: ReactToPostRequest
+    Reply: ReactToPostResponse
   }>(
     "/posts/:id/react",
     { preHandler: [requireAuth] },
     async (request, reply) => {
       try {
-        const userId = request.userId!;
+        const userId = request.userId!
         const { reaction, latitude, longitude } =
-          request.body as ReactToPostRequest;
+          request.body as ReactToPostRequest
 
         // Validate input
-        if (!reaction || !["like", "dislike"].includes(reaction)) {
+        if (!reaction || !["upvote", "downvote"].includes(reaction)) {
           return reply.code(400).send({
             success: false,
             reaction: null,
-            like_count: 0,
-            dislike_count: 0,
+            upvote_count: 0,
+            downvote_count: 0,
             new_expires_at: "",
-            error: 'reaction must be "like" or "dislike"',
-          });
+            error: 'reaction must be "upvote" or "downvote"',
+          })
         }
 
         if (latitude == null || longitude == null) {
           return reply.code(400).send({
             success: false,
             reaction: null,
-            like_count: 0,
-            dislike_count: 0,
+            upvote_count: 0,
+            downvote_count: 0,
             new_expires_at: "",
             error: "latitude and longitude are required",
-          });
+          })
         }
 
         const result = await postService.reactToPost(
@@ -62,15 +62,15 @@ export async function reactionRoutes(fastify: FastifyInstance) {
           reaction,
           latitude,
           longitude,
-        );
+        )
 
         return {
           success: true,
           ...result,
-        };
+        }
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Failed to react to post";
+          error instanceof Error ? error.message : "Failed to react to post"
 
         const status =
           message === "Post not found"
@@ -79,17 +79,17 @@ export async function reactionRoutes(fastify: FastifyInstance) {
               ? 410
               : message === "You must be near this post to react"
                 ? 403
-                : 500;
+                : 500
 
         return reply.code(status).send({
           success: false,
           reaction: null,
-          like_count: 0,
-          dislike_count: 0,
+          upvote_count: 0,
+          downvote_count: 0,
           new_expires_at: "",
           error: message,
-        });
+        })
       }
     },
-  );
+  )
 }
