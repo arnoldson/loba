@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react"
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,9 +11,9 @@ import {
   KeyboardAvoidingView,
   Alert,
   Platform,
-} from "react-native"
-import type { SuperTile } from "@/utils/postGrouping"
-import type { PublicPost, PublicComment } from "@loba/shared"
+} from "react-native";
+import type { SuperTile } from "@/utils/postGrouping";
+import type { PublicPost, PublicComment } from "@loba/shared";
 
 // ─── Configuration ──────────────────────────────────────────────────
 
@@ -21,17 +21,17 @@ const API_URL = Platform.select({
   ios: "http://localhost:3000",
   android: "http://10.0.2.2:3000",
   default: "http://localhost:3000",
-})
+});
 
 // ─── Props ──────────────────────────────────────────────────────────
 
 interface TileDetailsModalProps {
-  visible: boolean
-  tile: SuperTile | null
-  onClose: () => void
-  authToken?: string | null
-  onPostDeleted?: (postId: string) => void
-  userLocation?: { latitude: number; longitude: number } | null
+  visible: boolean;
+  tile: SuperTile | null;
+  onClose: () => void;
+  authToken?: string | null;
+  onPostDeleted?: (postId: string) => void;
+  userLocation?: { latitude: number; longitude: number } | null;
 }
 
 export function TileDetailsModal({
@@ -44,42 +44,42 @@ export function TileDetailsModal({
 }: TileDetailsModalProps) {
   // ─── State ──────────────────────────────────────────────────────────
 
-  const [selectedPost, setSelectedPost] = useState<PublicPost | null>(null)
-  const [comments, setComments] = useState<PublicComment[]>([])
-  const [isLoadingComments, setIsLoadingComments] = useState(false)
-  const [newComment, setNewComment] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [selectedPost, setSelectedPost] = useState<PublicPost | null>(null);
+  const [comments, setComments] = useState<PublicComment[]>([]);
+  const [isLoadingComments, setIsLoadingComments] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Track deleted post IDs so they disappear from the list immediately
-  const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set())
+  const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set());
 
   // Track local reaction state so UI updates immediately
   const [localReactions, setLocalReactions] = useState<
     Map<
       string,
       {
-        reaction: "upvote" | "downvote" | null
-        upvote_count: number
-        downvote_count: number
-        expires_at: string
+        reaction: "upvote" | "downvote" | null;
+        upvote_count: number;
+        downvote_count: number;
+        expires_at: string;
       }
     >
-  >(new Map())
+  >(new Map());
 
   // Stable auth headers object — only changes when token changes
   const authHeaders = useMemo(
     () => (authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     [authToken],
-  ) as Record<string, string>
+  ) as Record<string, string>;
 
   // ─── Helpers ────────────────────────────────────────────────────────
 
   /** Get the effective reaction state for a post (local override or server) */
   const getPostWithReaction = useCallback(
     (post: PublicPost) => {
-      const local = localReactions.get(post.id)
+      const local = localReactions.get(post.id);
       if (local) {
         return {
           ...post,
@@ -87,72 +87,72 @@ export function TileDetailsModal({
           upvote_count: local.upvote_count,
           downvote_count: local.downvote_count,
           expires_at: local.expires_at,
-        }
+        };
       }
-      return post
+      return post;
     },
     [localReactions],
-  )
+  );
 
   // ─── Handlers ───────────────────────────────────────────────────────
 
   const fetchComments = useCallback(
     async (postId: string) => {
-      setIsLoadingComments(true)
-      setError(null)
+      setIsLoadingComments(true);
+      setError(null);
       try {
         const res = await fetch(`${API_URL}/api/posts/${postId}/comments`, {
           headers: authHeaders,
-        })
-        const data = await res.json()
+        });
+        const data = await res.json();
 
         if (data.success) {
-          setComments(data.comments)
+          setComments(data.comments);
         } else {
-          setError(data.error || "Failed to load comments")
+          setError(data.error || "Failed to load comments");
         }
       } catch {
-        setError("Could not connect to server")
+        setError("Could not connect to server");
       } finally {
-        setIsLoadingComments(false)
+        setIsLoadingComments(false);
       }
     },
     [authHeaders],
-  )
+  );
 
   const handleSelectPost = useCallback(
     (post: PublicPost) => {
-      setSelectedPost(post)
-      setComments([])
-      setNewComment("")
-      setError(null)
-      fetchComments(post.id)
+      setSelectedPost(post);
+      setComments([]);
+      setNewComment("");
+      setError(null);
+      fetchComments(post.id);
     },
     [fetchComments],
-  )
+  );
 
   const handleBack = useCallback(() => {
-    setSelectedPost(null)
-    setComments([])
-    setNewComment("")
-    setError(null)
-  }, [])
+    setSelectedPost(null);
+    setComments([]);
+    setNewComment("");
+    setError(null);
+  }, []);
 
   const handleClose = useCallback(() => {
-    setSelectedPost(null)
-    setComments([])
-    setNewComment("")
-    setError(null)
-    setDeletedPostIds(new Set())
-    setLocalReactions(new Map())
-    onClose()
-  }, [onClose])
+    setSelectedPost(null);
+    setComments([]);
+    setNewComment("");
+    setError(null);
+    setDeletedPostIds(new Set());
+    setLocalReactions(new Map());
+    onClose();
+  }, [onClose]);
 
   const handleSubmitComment = useCallback(async () => {
-    if (!selectedPost || !newComment.trim() || !authToken) return
+    if (!selectedPost || !newComment.trim() || !authToken) return;
 
-    setIsSubmitting(true)
-    setError(null)
+    setIsSubmitting(true);
+    setError(null);
     try {
       const res = await fetch(
         `${API_URL}/api/posts/${selectedPost.id}/comments`,
@@ -164,66 +164,66 @@ export function TileDetailsModal({
           },
           body: JSON.stringify({ content: newComment.trim() }),
         },
-      )
-      const data = await res.json()
+      );
+      const data = await res.json();
 
       if (data.success) {
-        setComments((prev) => [...prev, data.comment])
-        setNewComment("")
+        setComments((prev) => [...prev, data.comment]);
+        setNewComment("");
       } else {
-        setError(data.error || "Failed to post comment")
+        setError(data.error || "Failed to post comment");
       }
     } catch {
-      setError("Could not connect to server")
+      setError("Could not connect to server");
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }, [selectedPost, newComment, authToken, authHeaders])
+  }, [selectedPost, newComment, authToken, authHeaders]);
 
   // ─── Reaction handler ───────────────────────────────────────────────
 
   const handleReaction = useCallback(
     async (post: PublicPost, reaction: "upvote" | "downvote") => {
-      if (!authToken || !userLocation) return
+      if (!authToken || !userLocation) return;
 
       // Optimistic update
-      const current = localReactions.get(post.id)
-      const currentReaction = current?.reaction ?? post.user_reaction ?? null
-      const currentUpvotes = current?.upvote_count ?? post.upvote_count
-      const currentDownvotes = current?.downvote_count ?? post.downvote_count
-      const currentExpiry = current?.expires_at ?? post.expires_at
+      const current = localReactions.get(post.id);
+      const currentReaction = current?.reaction ?? post.user_reaction ?? null;
+      const currentUpvotes = current?.upvote_count ?? post.upvote_count;
+      const currentDownvotes = current?.downvote_count ?? post.downvote_count;
+      const currentExpiry = current?.expires_at ?? post.expires_at;
 
-      let optimisticReaction: "upvote" | "downvote" | null
-      let optimisticUpvotes = currentUpvotes
-      let optimisticDownvotes = currentDownvotes
+      let optimisticReaction: "upvote" | "downvote" | null;
+      let optimisticUpvotes = currentUpvotes;
+      let optimisticDownvotes = currentDownvotes;
 
       if (currentReaction === reaction) {
         // Toggle off
-        optimisticReaction = null
-        if (reaction === "upvote") optimisticUpvotes--
-        else optimisticDownvotes--
+        optimisticReaction = null;
+        if (reaction === "upvote") optimisticUpvotes--;
+        else optimisticDownvotes--;
       } else {
         // New or switch
-        optimisticReaction = reaction
+        optimisticReaction = reaction;
         if (reaction === "upvote") {
-          optimisticUpvotes++
-          if (currentReaction === "downvote") optimisticDownvotes--
+          optimisticUpvotes++;
+          if (currentReaction === "downvote") optimisticDownvotes--;
         } else {
-          optimisticDownvotes++
-          if (currentReaction === "upvote") optimisticUpvotes--
+          optimisticDownvotes++;
+          if (currentReaction === "upvote") optimisticUpvotes--;
         }
       }
 
       setLocalReactions((prev) => {
-        const next = new Map(prev)
+        const next = new Map(prev);
         next.set(post.id, {
           reaction: optimisticReaction,
           upvote_count: Math.max(0, optimisticUpvotes),
           downvote_count: Math.max(0, optimisticDownvotes),
           expires_at: currentExpiry,
-        })
-        return next
-      })
+        });
+        return next;
+      });
 
       try {
         const res = await fetch(`${API_URL}/api/posts/${post.id}/react`, {
@@ -237,46 +237,46 @@ export function TileDetailsModal({
             latitude: userLocation.latitude,
             longitude: userLocation.longitude,
           }),
-        })
-        const data = await res.json()
+        });
+        const data = await res.json();
 
         if (data.success) {
           // Reconcile with server response
           setLocalReactions((prev) => {
-            const next = new Map(prev)
+            const next = new Map(prev);
             next.set(post.id, {
               reaction: data.reaction,
               upvote_count: data.upvote_count,
               downvote_count: data.downvote_count,
               expires_at: data.new_expires_at,
-            })
-            return next
-          })
+            });
+            return next;
+          });
         } else {
           // Revert optimistic update
           setLocalReactions((prev) => {
-            const next = new Map(prev)
-            next.delete(post.id)
-            return next
-          })
+            const next = new Map(prev);
+            next.delete(post.id);
+            return next;
+          });
           if (data.error === "You must be near this post to react") {
             Alert.alert(
               "Too far away",
               "You need to be near this post to vote.",
-            )
+            );
           }
         }
       } catch {
         // Revert on network error
         setLocalReactions((prev) => {
-          const next = new Map(prev)
-          next.delete(post.id)
-          return next
-        })
+          const next = new Map(prev);
+          next.delete(post.id);
+          return next;
+        });
       }
     },
     [authToken, userLocation, authHeaders, localReactions],
-  )
+  );
 
   // ─── Delete handlers ────────────────────────────────────────────────
 
@@ -291,41 +291,41 @@ export function TileDetailsModal({
             text: "Delete",
             style: "destructive",
             onPress: async () => {
-              setIsDeleting(true)
+              setIsDeleting(true);
               try {
                 const res = await fetch(`${API_URL}/api/posts/${post.id}`, {
                   method: "DELETE",
                   headers: authHeaders,
-                })
-                const data = await res.json()
+                });
+                const data = await res.json();
 
                 if (data.success) {
                   if (selectedPost?.id === post.id) {
-                    setSelectedPost(null)
-                    setComments([])
+                    setSelectedPost(null);
+                    setComments([]);
                   }
 
-                  setDeletedPostIds((prev) => new Set(prev).add(post.id))
-                  onPostDeleted?.(post.id)
+                  setDeletedPostIds((prev) => new Set(prev).add(post.id));
+                  onPostDeleted?.(post.id);
                 } else {
-                  Alert.alert("Error", data.error || "Failed to delete post")
+                  Alert.alert("Error", data.error || "Failed to delete post");
                 }
               } catch {
-                Alert.alert("Error", "Could not connect to server")
+                Alert.alert("Error", "Could not connect to server");
               } finally {
-                setIsDeleting(false)
+                setIsDeleting(false);
               }
             },
           },
         ],
-      )
+      );
     },
     [authHeaders, selectedPost, onPostDeleted],
-  )
+  );
 
   const handleDeleteComment = useCallback(
     (comment: PublicComment) => {
-      if (!selectedPost) return
+      if (!selectedPost) return;
 
       Alert.alert("Delete comment", "Are you sure?", [
         { text: "Cancel", style: "cancel" },
@@ -340,40 +340,40 @@ export function TileDetailsModal({
                   method: "DELETE",
                   headers: authHeaders,
                 },
-              )
-              const data = await res.json()
+              );
+              const data = await res.json();
 
               if (data.success) {
-                setComments((prev) => prev.filter((c) => c.id !== comment.id))
+                setComments((prev) => prev.filter((c) => c.id !== comment.id));
               } else {
-                Alert.alert("Error", data.error || "Failed to delete comment")
+                Alert.alert("Error", data.error || "Failed to delete comment");
               }
             } catch {
-              Alert.alert("Error", "Could not connect to server")
+              Alert.alert("Error", "Could not connect to server");
             }
           },
         },
-      ])
+      ]);
     },
     [authHeaders, selectedPost],
-  )
+  );
 
   // ─── Render ─────────────────────────────────────────────────────────
 
-  if (!tile) return null
+  if (!tile) return null;
 
-  const isPostView = selectedPost !== null
+  const isPostView = selectedPost !== null;
 
   // Filter out locally deleted posts
-  const visiblePosts = tile.posts.filter((p) => !deletedPostIds.has(p.id))
+  const visiblePosts = tile.posts.filter((p) => !deletedPostIds.has(p.id));
 
   // If all posts were deleted, close the modal
   if (visiblePosts.length === 0 && deletedPostIds.size > 0) {
-    setTimeout(handleClose, 0)
-    return null
+    setTimeout(handleClose, 0);
+    return null;
   }
 
-  const canReact = !!authToken && !!userLocation
+  const canReact = !!authToken && !!userLocation;
 
   return (
     <Modal
@@ -477,7 +477,7 @@ export function TileDetailsModal({
         </View>
       </KeyboardAvoidingView>
     </Modal>
-  )
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -492,13 +492,14 @@ function VoteButtons({
   canReact,
   compact = false,
 }: {
-  post: PublicPost
-  onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void
-  canReact: boolean
-  compact?: boolean
+  post: PublicPost;
+  onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void;
+  canReact: boolean;
+  compact?: boolean;
 }) {
-  const isUpvoted = post.user_reaction === "upvote"
-  const isDownvoted = post.user_reaction === "downvote"
+  const isUpvoted = post.user_reaction === "upvote";
+  const isDownvoted = post.user_reaction === "downvote";
+  const isDisabled = !canReact || post.is_own;
 
   return (
     <View style={compact ? voteStyles.containerCompact : voteStyles.container}>
@@ -508,14 +509,14 @@ function VoteButtons({
           isUpvoted && voteStyles.buttonUpvoted,
         ]}
         onPress={() => onReaction(post, "upvote")}
-        disabled={!canReact}
+        disabled={isDisabled}
         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       >
         <Text
           style={[
             compact ? voteStyles.arrowCompact : voteStyles.arrow,
             isUpvoted && voteStyles.arrowActive,
-            !canReact && voteStyles.arrowDisabled,
+            isDisabled && voteStyles.arrowDisabled,
           ]}
         >
           ▲
@@ -536,14 +537,14 @@ function VoteButtons({
           isDownvoted && voteStyles.buttonDownvoted,
         ]}
         onPress={() => onReaction(post, "downvote")}
-        disabled={!canReact}
+        disabled={isDisabled}
         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       >
         <Text
           style={[
             compact ? voteStyles.arrowCompact : voteStyles.arrow,
             isDownvoted && voteStyles.arrowActiveDown,
-            !canReact && voteStyles.arrowDisabled,
+            isDisabled && voteStyles.arrowDisabled,
           ]}
         >
           ▼
@@ -558,7 +559,7 @@ function VoteButtons({
         </Text>
       </TouchableOpacity>
     </View>
-  )
+  );
 }
 
 const voteStyles = StyleSheet.create({
@@ -630,32 +631,32 @@ const voteStyles = StyleSheet.create({
   countActiveDown: {
     color: "#e57373",
   },
-})
+});
 
 // ─── Expiry indicator ───────────────────────────────────────────────
 
 function ExpiryIndicator({ expiresAt }: { expiresAt: string }) {
-  const now = new Date()
-  const expiry = new Date(expiresAt)
-  const remainingMs = expiry.getTime() - now.getTime()
+  const now = new Date();
+  const expiry = new Date(expiresAt);
+  const remainingMs = expiry.getTime() - now.getTime();
 
-  if (remainingMs <= 0) return null
+  if (remainingMs <= 0) return null;
 
-  const remainingHours = remainingMs / 3600000
-  const remainingDays = Math.floor(remainingHours / 24)
-  const remainingH = Math.floor(remainingHours % 24)
+  const remainingHours = remainingMs / 3600000;
+  const remainingDays = Math.floor(remainingHours / 24);
+  const remainingH = Math.floor(remainingHours % 24);
 
-  let label: string
+  let label: string;
   if (remainingDays > 0) {
-    label = `${remainingDays}d ${remainingH}h left`
+    label = `${remainingDays}d ${remainingH}h left`;
   } else if (remainingHours >= 1) {
-    label = `${Math.floor(remainingHours)}h left`
+    label = `${Math.floor(remainingHours)}h left`;
   } else {
-    label = `${Math.max(1, Math.floor(remainingMs / 60000))}m left`
+    label = `${Math.max(1, Math.floor(remainingMs / 60000))}m left`;
   }
 
-  const isUrgent = remainingHours < 2
-  const isWarning = remainingHours < 6
+  const isUrgent = remainingHours < 2;
+  const isWarning = remainingHours < 6;
 
   return (
     <View
@@ -681,7 +682,7 @@ function ExpiryIndicator({ expiresAt }: { expiresAt: string }) {
         {label}
       </Text>
     </View>
-  )
+  );
 }
 
 const expiryStyles = StyleSheet.create({
@@ -712,7 +713,7 @@ const expiryStyles = StyleSheet.create({
   textUrgent: {
     color: "#e53935",
   },
-})
+});
 
 // ─── Post list view ─────────────────────────────────────────────────
 
@@ -724,12 +725,12 @@ function PostListView({
   isDeleting,
   canReact,
 }: {
-  posts: PublicPost[]
-  onSelectPost: (post: PublicPost) => void
-  onDeletePost: (post: PublicPost) => void
-  onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void
-  isDeleting: boolean
-  canReact: boolean
+  posts: PublicPost[];
+  onSelectPost: (post: PublicPost) => void;
+  onDeletePost: (post: PublicPost) => void;
+  onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void;
+  isDeleting: boolean;
+  canReact: boolean;
 }) {
   return (
     <ScrollView style={styles.postsList}>
@@ -793,7 +794,7 @@ function PostListView({
         </TouchableOpacity>
       ))}
     </ScrollView>
-  )
+  );
 }
 
 // ─── Post detail view ───────────────────────────────────────────────
@@ -809,15 +810,15 @@ function PostDetailView({
   isDeleting,
   canReact,
 }: {
-  post: PublicPost
-  comments: PublicComment[]
-  isLoading: boolean
-  error: string | null
-  onDeletePost: (post: PublicPost) => void
-  onDeleteComment: (comment: PublicComment) => void
-  onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void
-  isDeleting: boolean
-  canReact: boolean
+  post: PublicPost;
+  comments: PublicComment[];
+  isLoading: boolean;
+  error: string | null;
+  onDeletePost: (post: PublicPost) => void;
+  onDeleteComment: (comment: PublicComment) => void;
+  onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void;
+  isDeleting: boolean;
+  canReact: boolean;
 }) {
   return (
     <ScrollView style={styles.postsList}>
@@ -918,7 +919,7 @@ function PostDetailView({
         )}
       </View>
     </ScrollView>
-  )
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -926,19 +927,19 @@ function PostDetailView({
 // ═══════════════════════════════════════════════════════════════════════
 
 function formatTimestamp(timestamp: string): string {
-  const date = new Date(timestamp)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMs / 3600000)
-  const diffDays = Math.floor(diffMs / 86400000)
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 1) return "Just now"
-  if (diffMins < 60) return `${diffMins}m ago`
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
 
-  return date.toLocaleDateString()
+  return date.toLocaleDateString();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1212,4 +1213,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#999",
   },
-})
+});
