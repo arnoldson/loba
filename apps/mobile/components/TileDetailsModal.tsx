@@ -162,7 +162,11 @@ export function TileDetailsModal({
             "Content-Type": "application/json",
             ...authHeaders,
           },
-          body: JSON.stringify({ content: newComment.trim() }),
+          body: JSON.stringify({
+            content: newComment.trim(),
+            latitude: userLocation?.latitude,
+            longitude: userLocation?.longitude,
+          }),
         },
       );
       const data = await res.json();

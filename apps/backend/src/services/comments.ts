@@ -1,14 +1,15 @@
-import { db } from "../db/index.js"
-import { generateDisplayName } from "../utils/displayName.js"
-import type { PublicComment, UserProfile } from "@loba/shared"
+import { db } from "../db/index.js";
+import { generateDisplayName } from "../utils/displayName.js";
+import type { PublicComment, UserProfile } from "@loba/shared";
+import { isWithinProximity } from "../utils/proximity.js";
 
 // Internal type matching what Kysely returns from the comments table
 interface CommentRow {
-  id: string
-  post_id: string
-  user_id: string
-  content: string
-  created_at: string
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
 }
 
 export class CommentService {
@@ -21,16 +22,46 @@ export class CommentService {
     postId: string,
     userId: string,
     content: string,
+    userLat?: number,
+    userLng?: number,
   ): Promise<PublicComment> {
     // Verify the post exists
     const post = await db
       .selectFrom("posts")
-      .select("id")
+      .select(["id", "latitude", "longitude"])
       .where("id", "=", postId)
-      .executeTakeFirst()
+      .executeTakeFirst();
 
     if (!post) {
-      throw new Error("Post not found")
+      throw new Error("Post not found");
+    }
+
+    // Gate: must be nearby OR have previously reacted
+    const hasReaction = await db
+      .selectFrom("post_reactions")
+      .select("id")
+      .where("post_id", "=", postId)
+      .where("user_id", "=", userId)
+      .executeTakeFirst();
+
+    if (!hasReaction) {
+      // No prior reaction — check proximity
+      if (userLat == null || userLng == null) {
+        throw new Error("You must be near this post or have voted to comment");
+      }
+
+      const postLat =
+        typeof post.latitude === "string"
+          ? parseFloat(post.latitude)
+          : post.latitude;
+      const postLng =
+        typeof post.longitude === "string"
+          ? parseFloat(post.longitude)
+          : post.longitude;
+
+      if (!isWithinProximity(userLat, userLng, postLat, postLng)) {
+        throw new Error("You must be near this post or have voted to comment");
+      }
     }
 
     const comment = await db
@@ -41,12 +72,14 @@ export class CommentService {
         content,
       })
       .returningAll()
-      .executeTakeFirstOrThrow()
+      .executeTakeFirstOrThrow();
 
-    const profile = await this.getProfile(userId)
+    const profile = await this.getProfile(userId);
 
-    return this.toPublicComment(comment as CommentRow, profile, userId)
+    return this.toPublicComment(comment as CommentRow, profile, userId);
   }
+
+  // ─── Fetch comments for a post ─────────────────────────────────────
 
   // ─── Fetch comments for a post ─────────────────────────────────────
 
@@ -65,9 +98,9 @@ export class CommentService {
       .where("post_id", "=", postId)
       .orderBy("created_at", "asc")
       .limit(limit)
-      .execute()
+      .execute();
 
-    return this.toPublicComments(comments as CommentRow[], requestingUserId)
+    return this.toPublicComments(comments as CommentRow[], requestingUserId);
   }
 
   // ─── Delete a comment ──────────────────────────────────────────────
@@ -80,17 +113,17 @@ export class CommentService {
       .selectFrom("comments")
       .select(["id", "user_id"])
       .where("id", "=", commentId)
-      .executeTakeFirst()
+      .executeTakeFirst();
 
     if (!comment) {
-      throw new Error("Comment not found")
+      throw new Error("Comment not found");
     }
 
     if (comment.user_id !== userId) {
-      throw new Error("Not authorized to delete this comment")
+      throw new Error("Not authorized to delete this comment");
     }
 
-    await db.deleteFrom("comments").where("id", "=", commentId).execute()
+    await db.deleteFrom("comments").where("id", "=", commentId).execute();
   }
 
   // ─── Comment transformation ────────────────────────────────────────
@@ -99,18 +132,18 @@ export class CommentService {
     comments: CommentRow[],
     requestingUserId?: string,
   ): Promise<PublicComment[]> {
-    if (comments.length === 0) return []
+    if (comments.length === 0) return [];
 
-    const userIds = [...new Set(comments.map((c) => c.user_id))]
-    const profileMap = await this.getProfiles(userIds)
+    const userIds = [...new Set(comments.map((c) => c.user_id))];
+    const profileMap = await this.getProfiles(userIds);
 
     return comments.map((comment) => {
       return this.toPublicComment(
         comment,
         profileMap.get(comment.user_id),
         requestingUserId,
-      )
-    })
+      );
+    });
   }
 
   private toPublicComment(
@@ -118,18 +151,18 @@ export class CommentService {
     profile: UserProfile | undefined,
     requestingUserId?: string,
   ): PublicComment {
-    const displayName = generateDisplayName(comment.user_id, comment.post_id)
-    const isVerified = profile?.verification_status === "verified"
-    const isOwn = comment.user_id === requestingUserId
+    const displayName = generateDisplayName(comment.user_id, comment.post_id);
+    const isVerified = profile?.verification_status === "verified";
+    const isOwn = comment.user_id === requestingUserId;
 
-    const { user_id: _uid, ...rest } = comment
+    const { user_id: _uid, ...rest } = comment;
 
     return {
       ...rest,
       display_name: displayName,
       is_verified: isVerified,
       is_own: isOwn,
-    }
+    };
   }
 
   // ─── Profile lookups ───────────────────────────────────────────────
@@ -139,26 +172,26 @@ export class CommentService {
       .selectFrom("user_profiles")
       .selectAll()
       .where("user_id", "=", userId)
-      .executeTakeFirst()
+      .executeTakeFirst();
 
-    return (profile as UserProfile | undefined) || undefined
+    return (profile as UserProfile | undefined) || undefined;
   }
 
   private async getProfiles(
     userIds: string[],
   ): Promise<Map<string, UserProfile>> {
-    if (userIds.length === 0) return new Map()
+    if (userIds.length === 0) return new Map();
 
     const profiles = await db
       .selectFrom("user_profiles")
       .selectAll()
       .where("user_id", "in", userIds)
-      .execute()
+      .execute();
 
-    const map = new Map<string, UserProfile>()
+    const map = new Map<string, UserProfile>();
     for (const p of profiles) {
-      map.set(p.user_id, p as UserProfile)
+      map.set(p.user_id, p as UserProfile);
     }
-    return map
+    return map;
   }
 }
