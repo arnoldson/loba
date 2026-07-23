@@ -52,6 +52,21 @@ function expandRegionToBounds(region: Region, factor: number): Bounds {
   }
 }
 
+function UserLocationDot() {
+  return (
+    <View
+      style={{
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: "#007AFF",
+        borderWidth: 2,
+        borderColor: "white",
+      }}
+    />
+  )
+}
+
 export default function HomeScreen() {
   const { getAuthHeaders, session } = useAuth()
   const [location, setLocation] = useState<Location.LocationObject | null>(null)
@@ -66,6 +81,13 @@ export default function HomeScreen() {
 
   // The supertiles currently visible on screen — derived from the cache.
   const [visibleSupertiles, setVisibleSupertiles] = useState<SuperTile[]>([])
+
+  // Whether newly-added markers should still be tracked for re-snapshotting.
+  // iOS can take a custom marker's view snapshot before its first layout pass
+  // completes, resulting in an invisible marker if tracksViewChanges is false
+  // from the start. We track for a short window after new markers appear,
+  // then switch tracking off again for performance.
+  const [markersReady, setMarkersReady] = useState(false)
 
   const mapRef = useRef<MapView>(null)
   const lastFetchTime = useRef(0)
@@ -259,6 +281,8 @@ export default function HomeScreen() {
   }, [selectedTags])
 
   // Fetch nearby posts when location is available - ONLY ONCE.
+  // Also moves the camera to the real location, since MapView now uses
+  // initialRegion (mount-only) instead of a controlled region prop.
   // Intentionally omits selectedTags — initial fetch should always be unfiltered.
   useEffect(() => {
     if (location && mapRef.current && !hasInitialFetched.current) {
@@ -270,23 +294,21 @@ export default function HomeScreen() {
         location.coords.longitude,
       )
 
-      mapRef.current.getCamera().then((camera) => {
-        if (camera) {
-          const initialRegion: Region = {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            latitudeDelta: INITIAL_LAT_DELTA,
-            longitudeDelta: INITIAL_LAT_DELTA,
-          }
+      const initialRegion: Region = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        latitudeDelta: INITIAL_LAT_DELTA,
+        longitudeDelta: INITIAL_LAT_DELTA,
+      }
 
-          const calculatedZoom = getZoomLevel(initialRegion.latitudeDelta)
-          console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`)
-          setZoom(calculatedZoom)
-          lastRegion.current = initialRegion
+      mapRef.current.animateToRegion(initialRegion, 0)
 
-          fetchVisiblePosts(initialRegion, selectedTags)
-        }
-      })
+      const calculatedZoom = getZoomLevel(initialRegion.latitudeDelta)
+      console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`)
+      setZoom(calculatedZoom)
+      lastRegion.current = initialRegion
+
+      fetchVisiblePosts(initialRegion, selectedTags)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location, fetchVisiblePosts])
@@ -389,6 +411,17 @@ export default function HomeScreen() {
     return visibleSupertiles
   }, [visibleSupertiles])
 
+  // Briefly re-enable tracksViewChanges whenever the set of markers changes,
+  // so newly-mounted custom marker views get a chance to render before their
+  // snapshot is frozen. Switches back off after ~100ms for performance.
+  useEffect(() => {
+    if (supertiles.length > 0) {
+      setMarkersReady(false)
+      const timer = setTimeout(() => setMarkersReady(true), 100)
+      return () => clearTimeout(timer)
+    }
+  }, [supertiles])
+
   if (supertiles.length > 0) {
     console.log(
       `🎯 Zoom ${zoom}: Showing ${supertiles.length} markers (grouping factor: ${groupingFactor})`,
@@ -400,7 +433,7 @@ export default function HomeScreen() {
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
-        region={
+        initialRegion={
           location
             ? {
                 latitude: location.coords.latitude,
@@ -418,6 +451,21 @@ export default function HomeScreen() {
         onRegionChange={handleRegionChange}
         onRegionChangeComplete={handleRegionChangeComplete}
       >
+        {supertiles.map((tile) => {
+          const uniqueKey = `g${groupingFactor}-${tile.supertile_id}`
+          return (
+            <Marker
+              key={uniqueKey}
+              coordinate={tile.center}
+              onPress={() => handleTilePress(tile)}
+              tracksViewChanges={!markersReady}
+              zIndex={1}
+            >
+              <TileMarker count={tile.count} groupingFactor={groupingFactor} />
+            </Marker>
+          )
+        })}
+
         {location && (
           <Marker
             coordinate={{
@@ -425,23 +473,12 @@ export default function HomeScreen() {
               longitude: location.coords.longitude,
             }}
             title="You are here"
-          />
+            zIndex={1000}
+            tracksViewChanges={false}
+          >
+            <UserLocationDot />
+          </Marker>
         )}
-
-        {supertiles.map((tile) => {
-          const uniqueKey = `g${groupingFactor}-${tile.supertile_id}`
-
-          return (
-            <Marker
-              key={uniqueKey}
-              coordinate={tile.center}
-              onPress={() => handleTilePress(tile)}
-              tracksViewChanges={false}
-            >
-              <TileMarker count={tile.count} groupingFactor={groupingFactor} />
-            </Marker>
-          )
-        })}
       </MapView>
 
       {/* Tag filter bar */}
