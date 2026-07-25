@@ -38,3 +38,5 @@ jobs:
           # this check only hits /health and confirms dev routes 404,
           # it doesn't touch real data.
           DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.CI_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}
