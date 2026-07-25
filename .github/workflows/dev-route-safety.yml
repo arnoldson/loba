@@ -1,0 +1,42 @@
+name: Dev Route Safety Check
+
+on:
+  pull_request:
+    paths:
+      - "apps/backend/**"
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend/**"
+
+jobs:
+  check-dev-routes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: .
+
+      - name: Static gating check
+        run: node ../../scripts/check-dev-route-gating.mjs src/index.ts
+
+      - name: Runtime production-mode smoke test
+        run: node ../../scripts/check-prod-routes.mjs
+        env:
+          # Needed for the server to boot. A real Supabase project URL/key
+          # works fine here even if it's a throwaway/staging project —
+          # this check only hits /health and confirms dev routes 404,
+          # it doesn't touch real data.
+          DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.CI_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}

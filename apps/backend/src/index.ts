@@ -21,7 +21,6 @@ import { reactionRoutes } from "./routes/reactions.js"
 // Debug: Check if DATABASE_URL is loaded
 console.log("DATABASE_URL exists:", !!process.env.DATABASE_URL)
 console.log("DATABASE_URL length:", process.env.DATABASE_URL?.length)
-console.log("DATABASE_URL full:", process.env.DATABASE_URL)
 console.log("Working directory:", process.cwd())
 
 // Create Fastify instance
@@ -46,49 +45,52 @@ fastify.get("/health", async () => {
   return { status: "ok", timestamp: new Date().toISOString() }
 })
 
-// Database connection test
-fastify.get("/db-test", async (request, reply) => {
-  try {
-    const result = await db.selectFrom("posts").selectAll().limit(1).execute()
-    return {
-      status: "connected",
-      message: "Database connection successful",
-      postsCount: result.length,
-    }
-  } catch (error) {
-    console.error("Database connection error:", error)
-    reply.code(500).send({
-      status: "error",
-      message: error instanceof Error ? error.message : "Unknown error",
-      fullError: JSON.stringify(error, null, 2),
-    })
-  }
-})
-
-// Debug: List all posts
-fastify.get("/debug/posts", async (request, reply) => {
-  try {
-    const posts = await db.selectFrom("posts").selectAll().execute()
-    return {
-      count: posts.length,
-      posts: posts,
-    }
-  } catch (error) {
-    console.error("Error fetching posts:", error)
-    reply.code(500).send({
-      error: error instanceof Error ? error.message : "Unknown error",
-    })
-  }
-})
-
 // Register routes
 if (process.env.NODE_ENV !== "production") {
   await fastify.register(devAuthRoutes)
-  console.log("🔧 Dev auth routes enabled")
+  await fastify.register(seedRoutes, { prefix: "/api" })
+
+  // Database connection test
+  fastify.get("/db-test", async (request, reply) => {
+    try {
+      const result = await db.selectFrom("posts").selectAll().limit(1).execute()
+      return {
+        status: "connected",
+        message: "Database connection successful",
+        postsCount: result.length,
+      }
+    } catch (error) {
+      console.error("Database connection error:", error)
+      reply.code(500).send({
+        status: "error",
+        message: error instanceof Error ? error.message : "Unknown error",
+        fullError: JSON.stringify(error, null, 2),
+      })
+    }
+  })
+
+  // Debug: List all posts
+  fastify.get("/debug/posts", async (request, reply) => {
+    try {
+      const posts = await db.selectFrom("posts").selectAll().execute()
+      return {
+        count: posts.length,
+        posts: posts,
+      }
+    } catch (error) {
+      console.error("Error fetching posts:", error)
+      reply.code(500).send({
+        error: error instanceof Error ? error.message : "Unknown error",
+      })
+    }
+  })
+
+  console.log(
+    "🔧 Dev routes enabled: devAuthRoutes, /api/seed, /db-test, /debug/posts",
+  )
 }
 await fastify.register(postRoutes, { prefix: "/api" })
 await fastify.register(reactionRoutes, { prefix: "/api" })
-await fastify.register(seedRoutes, { prefix: "/api" })
 await fastify.register(commentRoutes, { prefix: "/api" })
 await fastify.register(postsSpatialRoutes)
 
