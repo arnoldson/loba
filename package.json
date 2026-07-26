@@ -9,9 +9,11 @@
   "scripts": {
     "mobile": "npm run start --workspace=@loba/mobile",
     "backend": "npm run dev --workspace=@loba/backend",
-    "backend:build": "npm run build --workspace=@loba/backend"
+    "backend:build": "npm run build --workspace=@loba/backend",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
     "typescript": "^5.3.3"
   }
 }
