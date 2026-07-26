@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+node scripts/pre-commit-route-check.mjs
