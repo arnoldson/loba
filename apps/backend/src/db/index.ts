@@ -31,7 +31,7 @@ export interface PostsTable {
   archived_at: string | null
   created_at: string
   updated_at: string
-  location: any // PostGIS geography column — managed by trigger
+  location: Generated<string> // PostGIS geography column — managed by trigger
 }
 
 export interface CommentsTable {
