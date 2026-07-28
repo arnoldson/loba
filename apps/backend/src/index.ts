@@ -106,21 +106,8 @@ const start = async () => {
     console.log(`📍 API endpoints: http://localhost:${port}/api`)
     console.log(`❤️  Health check: http://localhost:${port}/health\n`)
 
-    // Archive expired posts every 15 minutes
-    const { PostService } = await import("./services/posts.js")
-    const postService = new PostService()
-    setInterval(
-      async () => {
-        try {
-          const count = await postService.archiveExpiredPosts()
-          if (count > 0) {
-            console.log(`📦 Archived ${count} expired posts`)
-          }
-        } catch (err) {
-          console.error("Archive job failed:", err)
-        }
-      },
-      15 * 60 * 1000,
+    console.log(
+      `🕒 Archive/hard-delete jobs run via pg_cron in Postgres (see #13)\n`,
     )
   } catch (err) {
     fastify.log.error(err)
