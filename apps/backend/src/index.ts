@@ -36,6 +36,19 @@ const fastify = Fastify({
   },
 })
 
+// ─── Route table capture (used by scripts/lib/route-table.mjs) ────────
+// onRoute fires for every route as it's registered, giving a stable
+// "METHOD /path" list — avoids noisy printRoutes() tree-text diffs.
+const routeTable: string[] = []
+fastify.addHook("onRoute", (routeOptions) => {
+  const methods = Array.isArray(routeOptions.method)
+    ? routeOptions.method
+    : [routeOptions.method]
+  for (const method of methods) {
+    routeTable.push(`${method} ${routeOptions.url}`)
+  }
+})
+
 // Register CORS
 await fastify.register(cors, {
   origin: true, // Allow all origins in development
@@ -94,6 +107,17 @@ await fastify.register(reactionRoutes, { prefix: "/api" })
 await fastify.register(commentRoutes, { prefix: "/api" })
 await fastify.register(postsSpatialRoutes)
 
+// Escape hatch for scripts/lib/route-table.mjs: print the route table and
+// exit WITHOUT binding a port, so this can run even while a real dev
+// server is already listening on the same port.
+if (process.env.PRINT_ROUTES_AND_EXIT === "true") {
+  const routes = [...new Set(routeTable)].sort()
+  console.log("<<<ROUTES_START>>>")
+  console.log(JSON.stringify(routes))
+  console.log("<<<ROUTES_END>>>")
+  process.exit(0)
+}
+
 // Start server
 const start = async () => {
   try {
@@ -105,7 +129,6 @@ const start = async () => {
     console.log(`\n🚀 Server running on http://localhost:${port}`)
     console.log(`📍 API endpoints: http://localhost:${port}/api`)
     console.log(`❤️  Health check: http://localhost:${port}/health\n`)
-
     console.log(
       `🕒 Archive/hard-delete jobs run via pg_cron in Postgres (see #13)\n`,
     )

@@ -1,0 +1,22 @@
+[
+  "DELETE /api/posts/:id",
+  "DELETE /api/posts/:postId/comments/:commentId",
+  "GET /api/posts/:id",
+  "GET /api/posts/:postId/comments",
+  "GET /api/posts/in-bounds/test",
+  "GET /api/posts/mine",
+  "GET /api/tags/popular",
+  "GET /health",
+  "HEAD /api/posts/:id",
+  "HEAD /api/posts/:postId/comments",
+  "HEAD /api/posts/in-bounds/test",
+  "HEAD /api/posts/mine",
+  "HEAD /api/tags/popular",
+  "HEAD /health",
+  "OPTIONS *",
+  "POST /api/posts",
+  "POST /api/posts/:id/react",
+  "POST /api/posts/:postId/comments",
+  "POST /api/posts/by-tiles",
+  "POST /api/posts/in-bounds"
+]
