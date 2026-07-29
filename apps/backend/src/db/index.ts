@@ -75,10 +75,7 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is not set")
 }
 
-console.log(
-  "Connecting to database with URL:",
-  process.env.DATABASE_URL.substring(0, 50) + "...",
-)
+console.log("Connecting to database")
 
 export const db = new Kysely<Database>({
   dialect: new PostgresDialect({
