@@ -10,8 +10,11 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Ping Supabase via direct Postgres connection
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
         run: |
-          curl -sf "https://aarurnefqaxukopskkfs.supabase.co/rest/v1/posts?select=count&limit=1" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
+          psql "$DATABASE_URL" -c "SELECT 1;" -v ON_ERROR_STOP=1
