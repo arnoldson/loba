@@ -2,6 +2,13 @@
 
 **Review this checklist before every production deployment.**
 
+## App Store Submission Blockers
+
+- [ ] #25 Account deletion must be live — privacy.html states deletion
+      is available "from within the app's settings"
+- [ ] #24 Report + block must be live — terms.html describes
+      reporting/moderation tooling as available
+
 ## ⛔ Security
 
 - [ ] `NODE_ENV=production` is set in the deployment environment
@@ -50,5 +57,5 @@ After deployment, verify:
 
 ---
 
-_Last reviewed: \_**\_-**-\_\__
-_Reviewed by: ******\_\_\_\_******_
+\_Last reviewed: \_**\_-**-\_\_\_
+_Reviewed by: **\*\***\_\_\_\_**\*\***_
