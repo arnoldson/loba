@@ -17,6 +17,7 @@ import { postsSpatialRoutes } from "./routes/posts-spatial"
 import { devAuthRoutes } from "./routes/dev-auth.js"
 import { commentRoutes } from "./routes/comments.js"
 import { reactionRoutes } from "./routes/reactions.js"
+import { accountRoutes } from "./routes/account.js"
 
 // Debug: Check if DATABASE_URL is loaded
 console.log("DATABASE_URL exists:", !!process.env.DATABASE_URL)
@@ -105,6 +106,7 @@ if (process.env.NODE_ENV !== "production") {
 await fastify.register(postRoutes, { prefix: "/api" })
 await fastify.register(reactionRoutes, { prefix: "/api" })
 await fastify.register(commentRoutes, { prefix: "/api" })
+await fastify.register(accountRoutes, { prefix: "/api" })
 await fastify.register(postsSpatialRoutes)
 
 // Escape hatch for scripts/lib/route-table.mjs: print the route table and
