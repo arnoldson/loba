@@ -1,4 +1,5 @@
 [
+  "DELETE /api/account",
   "DELETE /api/posts/:id",
   "DELETE /api/posts/:postId/comments/:commentId",
   "GET /api/posts/:id",
