@@ -17,6 +17,10 @@ logs/
 *.log
 npm-debug.log*
 
+# Intentionally tracked despite the *.log rule above — visibility log for
+# acknowledged ungated production routes (see scripts/pre-commit-route-check.mjs)
+!scripts/route-acknowledgments.log
+
 # OS
 .DS_Store
 Thumbs.db

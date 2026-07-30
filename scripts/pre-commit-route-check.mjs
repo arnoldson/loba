@@ -18,7 +18,7 @@
  */
 
 import { execSync } from "node:child_process"
-import { readFileSync, writeFileSync, existsSync } from "node:fs"
+import { readFileSync, writeFileSync, existsSync, openSync, createReadStream } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, join, relative } from "node:path"
 import readline from "node:readline"
@@ -48,8 +48,9 @@ function writeSnapshot(path, routes) {
   writeFileSync(path, JSON.stringify(routes, null, 2) + "\n")
 }
 
-function stageFile(absPath) {
-  execSync(`git add "${relative(REPO_ROOT, absPath)}"`, { cwd: REPO_ROOT })
+function stageFile(absPath, { force = false } = {}) {
+  const flag = force ? "-f " : ""
+  execSync(`git add ${flag}"${relative(REPO_ROOT, absPath)}"`, { cwd: REPO_ROOT })
 }
 
 function appendAck(line) {
@@ -57,6 +58,19 @@ function appendAck(line) {
   const entry = `${ts}  ${line}\n`
   const existing = existsSync(ACK_LOG) ? readFileSync(ACK_LOG, "utf8") : ""
   writeFileSync(ACK_LOG, existing + entry)
+}
+
+function openTtyInput() {
+  // process.stdin is unreliable inside git hooks — git itself uses stdin
+  // during commit, and Husky's shell wrapper doesn't reliably forward the
+  // real terminal through to this child process. /dev/tty always refers
+  // to the actual controlling terminal, regardless of stdin redirection.
+  try {
+    const fd = openSync("/dev/tty", "r")
+    return createReadStream(null, { fd })
+  } catch {
+    return null // no controlling terminal available (e.g. CI) — caller must handle
+  }
 }
 
 async function ask(lineIterator, question, { defaultYes }) {
@@ -106,7 +120,16 @@ async function main() {
   }
 
   if (added.length > 0) {
-    const rl = readline.createInterface({ input: process.stdin })
+    const ttyInput = openTtyInput()
+    if (!ttyInput) {
+      console.error(
+        "[route-check] No controlling terminal available to prompt for new routes " +
+          `(${added.join(", ")}). Blocking commit to be safe — run this commit from ` +
+          "an interactive terminal, or review and re-run.",
+      )
+      process.exit(1)
+    }
+    const rl = readline.createInterface({ input: ttyInput })
     const lineIterator = rl[Symbol.asyncIterator]()
     try {
       for (const route of added) {
@@ -150,7 +173,7 @@ async function main() {
   writeSnapshot(SNAPSHOT_PROD, prodActual)
   stageFile(SNAPSHOT_DEV)
   stageFile(SNAPSHOT_PROD)
-  if (existsSync(ACK_LOG)) stageFile(ACK_LOG)
+  if (existsSync(ACK_LOG)) stageFile(ACK_LOG, { force: true })
 
   console.log("\n[route-check] Snapshot updated and staged. Commit proceeding.")
   process.exit(0)
