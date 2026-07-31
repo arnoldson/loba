@@ -17,6 +17,11 @@
 - [ ] `DATABASE_URL` uses production credentials, not dev/local
 - [ ] `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set and correct
 - [ ] Service role key is NOT exposed to the frontend
+- [ ] `DELETED_USER_ID` is set — run `scripts/create-deleted-user-sentinel.mjs`
+      against the production DB first, then set the resulting user id.
+      Without this, `DELETE /account` throws immediately (see
+      `apps/backend/src/services/account.ts`) and account deletion is
+      broken in prod even though it works locally.
 - [ ] CORS origin is restricted (not `origin: true`)
 
 ## 🗄️ Database
@@ -54,6 +59,10 @@ After deployment, verify:
 - [ ] `POST /api/posts/in-bounds` returns posts
 - [ ] Auth flow works (signup → login → create post)
 - [ ] Proximity check rejects distant reactions
+- [ ] Account deletion works end-to-end (`scripts/test-account-deletion.sh`):
+      old credentials fail to log in afterward; posts/comments remain
+      visible reassigned to the sentinel; vote counts stay frozen (see
+      `apps/backend/src/services/account.ts` for why votes aren't reassigned)
 
 ---
 
