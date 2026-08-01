@@ -19,11 +19,6 @@ import { commentRoutes } from "./routes/comments.js"
 import { reactionRoutes } from "./routes/reactions.js"
 import { accountRoutes } from "./routes/account.js"
 
-// Debug: Check if DATABASE_URL is loaded
-console.log("DATABASE_URL exists:", !!process.env.DATABASE_URL)
-console.log("DATABASE_URL length:", process.env.DATABASE_URL?.length)
-console.log("Working directory:", process.cwd())
-
 // Create Fastify instance
 const fastify = Fastify({
   logger: {
