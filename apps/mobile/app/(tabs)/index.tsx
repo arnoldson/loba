@@ -26,6 +26,8 @@ import {
 } from "@/utils/postGrouping"
 import { getBoundingBox, getVisibleAreaMeters } from "@/utils/mapBounds"
 import { perfMonitor } from "@/utils/diagnostics"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { DevCrashButton } from "@/components/DevCrashButton"
 
 // Backend API URL
 const API_URL = Platform.select({
@@ -430,56 +432,62 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFillObject}
-        initialRegion={
-          location
-            ? {
+      <ErrorBoundary label="Map">
+        <MapView
+          ref={mapRef}
+          style={StyleSheet.absoluteFillObject}
+          initialRegion={
+            location
+              ? {
+                  latitude: location.coords.latitude,
+                  longitude: location.coords.longitude,
+                  latitudeDelta: INITIAL_LAT_DELTA,
+                  longitudeDelta: INITIAL_LAT_DELTA,
+                }
+              : {
+                  latitude: 37.78825,
+                  longitude: -122.4324,
+                  latitudeDelta: 0.0922,
+                  longitudeDelta: 0.0421,
+                }
+          }
+          onRegionChange={handleRegionChange}
+          onRegionChangeComplete={handleRegionChangeComplete}
+        >
+          {supertiles.map((tile) => {
+            const uniqueKey = `g${groupingFactor}-${tile.supertile_id}`
+            return (
+              <Marker
+                key={uniqueKey}
+                coordinate={tile.center}
+                onPress={() => handleTilePress(tile)}
+                tracksViewChanges={!markersReady}
+                zIndex={1}
+              >
+                <TileMarker
+                  count={tile.count}
+                  groupingFactor={groupingFactor}
+                />
+              </Marker>
+            )
+          })}
+
+          {location && (
+            <Marker
+              coordinate={{
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
-                latitudeDelta: INITIAL_LAT_DELTA,
-                longitudeDelta: INITIAL_LAT_DELTA,
-              }
-            : {
-                latitude: 37.78825,
-                longitude: -122.4324,
-                latitudeDelta: 0.0922,
-                longitudeDelta: 0.0421,
-              }
-        }
-        onRegionChange={handleRegionChange}
-        onRegionChangeComplete={handleRegionChangeComplete}
-      >
-        {supertiles.map((tile) => {
-          const uniqueKey = `g${groupingFactor}-${tile.supertile_id}`
-          return (
-            <Marker
-              key={uniqueKey}
-              coordinate={tile.center}
-              onPress={() => handleTilePress(tile)}
-              tracksViewChanges={!markersReady}
-              zIndex={1}
+              }}
+              title="You are here"
+              zIndex={1000}
+              tracksViewChanges={false}
             >
-              <TileMarker count={tile.count} groupingFactor={groupingFactor} />
+              <UserLocationDot />
             </Marker>
-          )
-        })}
-
-        {location && (
-          <Marker
-            coordinate={{
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            }}
-            title="You are here"
-            zIndex={1000}
-            tracksViewChanges={false}
-          >
-            <UserLocationDot />
-          </Marker>
-        )}
-      </MapView>
+          )}
+        </MapView>
+        {__DEV__ && <DevCrashButton />}
+      </ErrorBoundary>
 
       {/* Tag filter bar */}
       <TagFilterBar
@@ -528,22 +536,23 @@ export default function HomeScreen() {
           onPostCreated={handlePostCreated}
         />
       )}
-
-      <TileDetailsModal
-        visible={isTileModalVisible}
-        tile={selectedTile}
-        onClose={() => setIsTileModalVisible(false)}
-        authToken={session?.access_token ?? null}
-        onPostDeleted={handlePostDeleted}
-        userLocation={
-          location
-            ? {
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-              }
-            : null
-        }
-      />
+      <ErrorBoundary label="Post details">
+        <TileDetailsModal
+          visible={isTileModalVisible}
+          tile={selectedTile}
+          onClose={() => setIsTileModalVisible(false)}
+          authToken={session?.access_token ?? null}
+          onPostDeleted={handlePostDeleted}
+          userLocation={
+            location
+              ? {
+                  latitude: location.coords.latitude,
+                  longitude: location.coords.longitude,
+                }
+              : null
+          }
+        />
+      </ErrorBoundary>
     </View>
   )
 }
