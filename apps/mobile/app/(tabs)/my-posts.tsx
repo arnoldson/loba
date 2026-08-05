@@ -7,18 +7,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Platform,
   RefreshControl,
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/utils/auth"
 import type { OwnPost } from "@loba/shared"
-
-const API_URL = Platform.select({
-  ios: "http://localhost:3000",
-  android: "http://10.0.2.2:3000",
-  default: "http://localhost:3000",
-})
+import { API_URL } from "@/utils/api"
 
 export default function MyPostsScreen() {
   const { getAuthHeaders } = useAuth()

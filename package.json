@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "mobile": "npm run start --workspace=@loba/mobile",
+    "mobile:prod": "npm run start:prod --workspace=@loba/mobile",
     "backend": "npm run dev --workspace=@loba/backend",
     "backend:build": "npm run build --workspace=@loba/backend",
     "prepare": "husky"

@@ -12,12 +12,7 @@ import {
 } from "react-native"
 import type { CreatePostRequest, CreatePostResponse } from "@loba/shared"
 import { useAuth } from "@/utils/auth"
-
-const API_URL = Platform.select({
-  ios: "http://localhost:3000",
-  android: "http://10.0.2.2:3000",
-  default: "http://localhost:3000",
-})
+import { API_URL } from "@/utils/api"
 
 interface CreatePostModalProps {
   visible: boolean

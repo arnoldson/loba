@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react"
 import {
   ActivityIndicator,
   Alert,
-  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -28,13 +27,9 @@ import { getBoundingBox, getVisibleAreaMeters } from "@/utils/mapBounds"
 import { perfMonitor } from "@/utils/diagnostics"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DevCrashButton } from "@/components/DevCrashButton"
+import { API_URL } from "@/utils/api"
 
 // Backend API URL
-const API_URL = Platform.select({
-  ios: "http://localhost:3000",
-  android: "http://10.0.2.2:3000",
-  default: "http://localhost:3000",
-})
 
 // Initial map settings
 const INITIAL_LAT_DELTA = 0.005
