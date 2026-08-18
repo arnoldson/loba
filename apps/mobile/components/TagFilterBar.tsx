@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react"
+import React, { useCallback } from "react"
 import {
   View,
   Text,
@@ -7,49 +7,29 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from "react-native"
-import { API_URL } from "@/utils/api"
 
-interface TagFilterBarProps {
-  selectedTags: string[]
-  onTagsChanged: (tags: string[]) => void
-}
-
-interface PopularTag {
+export interface PopularTag {
   tag: string
   count: number
 }
 
+interface TagFilterBarProps {
+  popularTags: PopularTag[]
+  isLoading: boolean
+  selectedTags: string[]
+  onTagsChanged: (tags: string[]) => void
+}
+
+// Presentational only — fetching and refresh timing are owned by the
+// parent screen (index.tsx), alongside the rest of its post/map fetch
+// orchestration. See handlePostCreated / handleRegionChangeComplete for
+// when popularTags gets refreshed.
 export function TagFilterBar({
+  popularTags,
+  isLoading,
   selectedTags,
   onTagsChanged,
 }: TagFilterBarProps) {
-  const [popularTags, setPopularTags] = useState<PopularTag[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-
-  // Fetch popular tags on mount
-  useEffect(() => {
-    let cancelled = false
-
-    const fetchTags = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/tags/popular?limit=20`)
-        const data = await res.json()
-        if (!cancelled && data.success) {
-          setPopularTags(data.tags)
-        }
-      } catch (err) {
-        console.error("Failed to fetch popular tags:", err)
-      } finally {
-        if (!cancelled) setIsLoading(false)
-      }
-    }
-
-    fetchTags()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   const toggleTag = useCallback(
     (tag: string) => {
       if (selectedTags.includes(tag)) {

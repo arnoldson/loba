@@ -13,7 +13,7 @@ import MapView, { Marker, Region } from "react-native-maps"
 import { TileMarker } from "@/components/TileMarker"
 import { TileDetailsModal } from "@/components/TileDetailsModal"
 import { CreatePostModal } from "@/components/CreatePostModal"
-import { TagFilterBar } from "@/components/TagFilterBar"
+import { TagFilterBar, type PopularTag } from "@/components/TagFilterBar"
 import { getZoomLevel, getGroupingFactor } from "@/utils/tiles"
 import {
   type SuperTile,
@@ -73,6 +73,12 @@ export default function HomeScreen() {
   // Tag filter state
   const [selectedTags, setSelectedTags] = useState<string[]>([])
 
+  // Popular tags shown in TagFilterBar — owned here (not in the component)
+  // so it can be refreshed from the same places posts get refreshed
+  // (post creation, pan/zoom stop), instead of only fetching once on mount.
+  const [popularTags, setPopularTags] = useState<PopularTag[]>([])
+  const [isLoadingTags, setIsLoadingTags] = useState(true)
+
   // Supertile cache — THE source of truth for all tile data.
   const supertileCache = useRef(new SupertileCache()).current
 
@@ -115,6 +121,24 @@ export default function HomeScreen() {
       let currentLocation = await Location.getCurrentPositionAsync({})
       setLocation(currentLocation)
     })()
+  }, [])
+
+  // Fetch popular tags for TagFilterBar. Called on mount, after creating a
+  // post, and on pan/zoom stop (piggybacking on the same fetch cycle as
+  // fetchVisiblePosts) so the bar reflects both the user's own new posts
+  // and other users' posts without needing a separate polling timer.
+  const fetchPopularTags = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/tags/popular?limit=20`)
+      const data = await res.json()
+      if (data.success) {
+        setPopularTags(data.tags)
+      }
+    } catch (err) {
+      console.error("Failed to fetch popular tags:", err)
+    } finally {
+      setIsLoadingTags(false)
+    }
   }, [])
 
   // Fetch posts for visible area — only fetches supertiles not already cached
@@ -306,9 +330,10 @@ export default function HomeScreen() {
       lastRegion.current = initialRegion
 
       fetchVisiblePosts(initialRegion, selectedTags)
+      fetchPopularTags()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location, fetchVisiblePosts])
+  }, [location, fetchVisiblePosts, fetchPopularTags])
 
   // Handle map region changes while panning (lightweight - just update zoom)
   const handleRegionChange = (newRegion: Region) => {
@@ -336,8 +361,9 @@ export default function HomeScreen() {
 
       lastFetchTime.current = now
       fetchVisiblePosts(region, selectedTags)
+      fetchPopularTags()
     },
-    [isLoadingPosts, fetchVisiblePosts, selectedTags],
+    [isLoadingPosts, fetchVisiblePosts, selectedTags, fetchPopularTags],
   )
 
   const recenterMap = () => {
@@ -370,8 +396,12 @@ export default function HomeScreen() {
         const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
         setVisibleSupertiles(supertileCache.getVisible(visibleIds))
       }
+      // A new post may introduce a new tag, or bump an existing tag's
+      // count — refresh immediately rather than waiting for the next
+      // pan/zoom stop.
+      fetchPopularTags()
     },
-    [zoom, location, supertileCache],
+    [zoom, location, supertileCache, fetchPopularTags],
   )
 
   // Called by TileDetailsModal after a post is deleted
@@ -486,6 +516,8 @@ export default function HomeScreen() {
 
       {/* Tag filter bar */}
       <TagFilterBar
+        popularTags={popularTags}
+        isLoading={isLoadingTags}
         selectedTags={selectedTags}
         onTagsChanged={handleTagsChanged}
       />
