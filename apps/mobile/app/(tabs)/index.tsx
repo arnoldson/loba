@@ -123,13 +123,23 @@ export default function HomeScreen() {
     })()
   }, [])
 
-  // Fetch popular tags for TagFilterBar. Called on mount, after creating a
-  // post, and on pan/zoom stop (piggybacking on the same fetch cycle as
-  // fetchVisiblePosts) so the bar reflects both the user's own new posts
-  // and other users' posts without needing a separate polling timer.
-  const fetchPopularTags = useCallback(async () => {
+  // Fetch popular tags for TagFilterBar, scoped to the given region's
+  // bounding box — mirrors fetchVisiblePosts so the tag list only ever
+  // reflects what's actually visible on the map. Called on mount, after
+  // creating a post, and on pan/zoom stop (piggybacking on the same fetch
+  // cycle as fetchVisiblePosts) so it reflects both the user's own new
+  // posts and other users' posts without needing a separate polling timer.
+  const fetchPopularTags = useCallback(async (region: Region) => {
     try {
-      const res = await fetch(`${API_URL}/api/tags/popular?limit=20`)
+      const bounds = getBoundingBox(region)
+      const params = new URLSearchParams({
+        minLat: String(bounds.minLat),
+        maxLat: String(bounds.maxLat),
+        minLng: String(bounds.minLng),
+        maxLng: String(bounds.maxLng),
+        limit: "20",
+      })
+      const res = await fetch(`${API_URL}/api/tags/popular?${params}`)
       const data = await res.json()
       if (data.success) {
         setPopularTags(data.tags)
@@ -330,7 +340,7 @@ export default function HomeScreen() {
       lastRegion.current = initialRegion
 
       fetchVisiblePosts(initialRegion, selectedTags)
-      fetchPopularTags()
+      fetchPopularTags(initialRegion)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location, fetchVisiblePosts, fetchPopularTags])
@@ -348,20 +358,30 @@ export default function HomeScreen() {
       setZoom(calculatedZoom)
       lastRegion.current = region
 
+      // Tags are cheap (a single indexed aggregate query) unlike
+      // fetchVisiblePosts (fetches/parses/groups potentially hundreds of
+      // posts), so they intentionally aren't subject to the same
+      // isLoadingPosts/throttle guards below. Coupling them meant a
+      // throttled or skipped posts-fetch call would also skip refreshing
+      // tags, leaving the bar showing stale counts from an earlier
+      // viewport indefinitely (e.g. a post just outside the current view
+      // still counted, because the "final" region never got a tags
+      // fetch of its own).
+      fetchPopularTags(region)
+
       if (isLoadingPosts) {
-        console.log("⏭️  Skipping - already loading")
+        console.log("⏭️  Skipping posts fetch - already loading")
         return
       }
 
       const now = Date.now()
       if (now - lastFetchTime.current < 1000) {
-        console.log("⏭️  Skipping - throttled")
+        console.log("⏭️  Skipping posts fetch - throttled")
         return
       }
 
       lastFetchTime.current = now
       fetchVisiblePosts(region, selectedTags)
-      fetchPopularTags()
     },
     [isLoadingPosts, fetchVisiblePosts, selectedTags, fetchPopularTags],
   )
@@ -398,8 +418,17 @@ export default function HomeScreen() {
       }
       // A new post may introduce a new tag, or bump an existing tag's
       // count — refresh immediately rather than waiting for the next
-      // pan/zoom stop.
-      fetchPopularTags()
+      // pan/zoom stop. Uses the real current viewport (lastRegion) rather
+      // than a GPS-reconstructed region, since tags are scoped to what's
+      // actually visible, which may differ from the user's raw location
+      // if they've panned since their last fetch.
+      const tagsRegion = lastRegion.current ?? {
+        latitude: location?.coords.latitude ?? 0,
+        longitude: location?.coords.longitude ?? 0,
+        latitudeDelta: INITIAL_LAT_DELTA,
+        longitudeDelta: INITIAL_LAT_DELTA,
+      }
+      fetchPopularTags(tagsRegion)
     },
     [zoom, location, supertileCache, fetchPopularTags],
   )
