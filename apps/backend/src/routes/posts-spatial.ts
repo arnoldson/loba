@@ -71,7 +71,6 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         return {
           success: true,
           posts,
-          count: posts.length,
           dbQueryTime,
           filtered_by_tags: cleanTags || null,
         }
@@ -88,15 +87,55 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * GET /api/tags/popular
-   * Get the most frequently used tags across all posts.
+   * Get the most frequently used tags among posts within a bounding box.
+   * Scoped to match what's visible on the map (same pattern as
+   * /api/posts/in-bounds) rather than globally — an app-wide tag list
+   * would misrepresent what's actually happening near the user.
    * Used by the frontend to populate the tag filter bar.
    */
   fastify.get("/api/tags/popular", async (request, reply) => {
     try {
-      const { limit } = request.query as { limit?: string }
+      const { minLat, maxLat, minLng, maxLng, limit } = request.query as {
+        minLat?: string
+        maxLat?: string
+        minLng?: string
+        maxLng?: string
+        limit?: string
+      }
+
+      const parsedMinLat = Number(minLat)
+      const parsedMaxLat = Number(maxLat)
+      const parsedMinLng = Number(minLng)
+      const parsedMaxLng = Number(maxLng)
+
+      if (
+        minLat == null ||
+        maxLat == null ||
+        minLng == null ||
+        maxLng == null ||
+        Number.isNaN(parsedMinLat) ||
+        Number.isNaN(parsedMaxLat) ||
+        Number.isNaN(parsedMinLng) ||
+        Number.isNaN(parsedMaxLng)
+      ) {
+        return reply.status(400).send({
+          success: false,
+          error:
+            "Missing or invalid required bounds: minLat, maxLat, minLng, maxLng",
+        })
+      }
+
       const parsedLimit = Math.min(Number(limit) || 20, 50)
 
-      const tags = await postService.getPopularTags(parsedLimit)
+      const tags = await postService.getPopularTags(
+        {
+          minLat: parsedMinLat,
+          maxLat: parsedMaxLat,
+          minLng: parsedMinLng,
+          maxLng: parsedMaxLng,
+        },
+        parsedLimit,
+      )
 
       return {
         success: true,
