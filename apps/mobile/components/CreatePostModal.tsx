@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import {
   Alert,
   KeyboardAvoidingView,
@@ -22,6 +22,33 @@ interface CreatePostModalProps {
   onPostCreated: (post: CreatePostResponse["post"]) => void
 }
 
+// Matches Twitter/Instagram-style hashtag tokens: '#' followed by one or
+// more word characters (letters, digits, underscore).
+const TAG_PATTERN = /#\w+/g
+
+/**
+ * Extracts unique hashtags from freeform post text, in first-seen order.
+ * This is the single source of truth for tags — there's no separate draft
+ * field to keep in sync, so nothing can be "silently dropped" (see #39).
+ */
+function extractTags(text: string): string[] {
+  const matches = text.match(TAG_PATTERN) || []
+  const seen = new Set<string>()
+  const tags: string[] = []
+  for (const match of matches) {
+    if (!seen.has(match)) {
+      seen.add(match)
+      tags.push(match)
+    }
+  }
+  return tags
+}
+
+/** Escapes regex special characters for safe use inside a dynamic RegExp. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 export function CreatePostModal({
   visible,
   onClose,
@@ -32,8 +59,10 @@ export function CreatePostModal({
   const { getAuthHeaders } = useAuth()
 
   const [postText, setPostText] = useState("")
-  const [tags, setTags] = useState<string[]>([])
-  const [tagInput, setTagInput] = useState("")
+
+  // Derived, not stored: tags are always exactly what's parseable from the
+  // current text, so there's nothing to lose sync with.
+  const tags = useMemo(() => extractTags(postText), [postText])
 
   const handleCreatePost = async () => {
     if (!postText.trim()) {
@@ -43,7 +72,7 @@ export function CreatePostModal({
 
     const requestBody: CreatePostRequest = {
       content: postText,
-      tags: tags,
+      tags,
       latitude,
       longitude,
     }
@@ -64,10 +93,7 @@ export function CreatePostModal({
       Alert.alert("Success!", "Post created successfully!")
       onPostCreated(data.post)
 
-      // Reset form
       setPostText("")
-      setTags([])
-      setTagInput("")
       onClose()
     } catch (error) {
       Alert.alert(
@@ -78,26 +104,21 @@ export function CreatePostModal({
     }
   }
 
-  const handleAddTag = (text: string) => {
-    setTagInput(text)
-
-    if (text.endsWith(" ") && text.trim().startsWith("#")) {
-      const newTag = text.trim()
-      if (newTag.length > 1 && !tags.includes(newTag)) {
-        setTags([...tags, newTag])
-        setTagInput("")
-      }
-    }
-  }
-
+  // Removes every occurrence of a tag from the text (not just the first),
+  // using a negative lookahead so "#food" doesn't also strip "#foodie".
   const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter((tag) => tag !== tagToRemove))
+    const pattern = new RegExp(`${escapeRegExp(tagToRemove)}(?!\\w)`, "g")
+    setPostText((prev) =>
+      prev
+        .replace(pattern, "")
+        .replace(/[ \t]{2,}/g, " ")
+        .replace(/[ \t]+\n/g, "\n")
+        .trimEnd(),
+    )
   }
 
   const handleCancel = () => {
     setPostText("")
-    setTags([])
-    setTagInput("")
     onClose()
   }
 
@@ -118,25 +139,18 @@ export function CreatePostModal({
 
           <TextInput
             style={styles.textInput}
-            placeholder="What's happening here?"
+            placeholder="What's happening here? Use #tags inline"
             value={postText}
             onChangeText={setPostText}
             multiline
             maxLength={280}
           />
 
-          <TextInput
-            style={styles.tagInput}
-            placeholder="Add tags (e.g., #food #event)"
-            value={tagInput}
-            onChangeText={handleAddTag}
-          />
-
           {tags.length > 0 && (
             <View style={styles.tagsContainer}>
-              {tags.map((tag, index) => (
+              {tags.map((tag) => (
                 <TouchableOpacity
-                  key={index}
+                  key={tag}
                   style={styles.tagChip}
                   onPress={() => removeTag(tag)}
                 >
@@ -196,14 +210,6 @@ const styles = StyleSheet.create({
     padding: 12,
     minHeight: 100,
     textAlignVertical: "top",
-    fontSize: 16,
-    marginBottom: 15,
-  },
-  tagInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 12,
     fontSize: 16,
     marginBottom: 10,
   },
