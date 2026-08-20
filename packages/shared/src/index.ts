@@ -148,3 +148,25 @@ export type ApiError = {
   success: false
   error: string
 }
+
+// ─── Shared runtime utilities ────────────────────────────────────────
+
+/**
+ * Lowercases and deduplicates tags so "#Food" and "#food" are treated as
+ * the same tag for storage, filtering, and popularity aggregation.
+ * Shared between backend (write/filter paths) and mobile (submit payload)
+ * so both sides apply identical normalization rather than two copies that
+ * could drift apart.
+ */
+export function normalizeTags(tags: string[]): string[] {
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  for (const tag of tags) {
+    const lower = tag.toLowerCase()
+    if (!seen.has(lower)) {
+      seen.add(lower)
+      normalized.push(lower)
+    }
+  }
+  return normalized
+}
