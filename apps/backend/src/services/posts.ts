@@ -14,6 +14,7 @@ import type {
   CreatePostRequest,
   UserProfile,
 } from "@loba/shared"
+import { normalizeTags } from "@loba/shared"
 
 export class PostService {
   // ─── Post creation (proximity-gated) ────────────────────────────────
@@ -36,7 +37,7 @@ export class PostService {
         latitude: data.latitude,
         longitude: data.longitude,
         tile_id: tileId,
-        tags: data.tags,
+        tags: normalizeTags(data.tags),
         expires_at: expiresAt.toISOString(),
         archived_at: null,
         created_at: now.toISOString(),
@@ -300,8 +301,9 @@ export class PostService {
       .where("expires_at", ">", now)
 
     if (tags && tags.length > 0) {
+      const normalizedTags = normalizeTags(tags)
       query = query.where(
-        sql<boolean>`tags && ARRAY[${sql.join(tags.map((t) => sql`${t}`))}]::text[]`,
+        sql<boolean>`tags && ARRAY[${sql.join(normalizedTags.map((t) => sql`${t}`))}]::text[]`,
       )
     }
 
