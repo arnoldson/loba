@@ -46,8 +46,42 @@ export interface UserProfilesTable {
   user_id: string
   verification_status: "unverified" | "pending" | "verified" | "rejected"
   verified_at: string | null
+  restriction_status: "none" | "pending_review" // view-only gate, see #24
   created_at: Generated<string>
   updated_at: string
+}
+
+export interface PostReportsTable {
+  id: Generated<string>
+  post_id: string
+  reporter_user_id: string
+  reason: "spam" | "harassment" | "illegal" | "other"
+  content_snapshot: string
+  photo_url_snapshot: string | null
+  tags_snapshot: string[]
+  post_user_id_snapshot: string
+  tile_id_snapshot: string
+  post_created_at_snapshot: string
+  status: Generated<"pending" | "reviewed"> // DEFAULT 'pending' in DB
+  created_at: Generated<string>
+}
+
+export interface UserBansTable {
+  id: Generated<string>
+  user_id: string
+  banned_until: string | null // null = permanent
+  reason: string
+  email_snapshot: string
+  ip_snapshot: string[]
+  created_at: Generated<string>
+}
+
+export interface UserIpLogTable {
+  id: Generated<string>
+  user_id: string
+  ip_address: string
+  first_seen: Generated<string>
+  last_seen: Generated<string> // DEFAULT now() in DB
 }
 
 export interface PostReactionsTable {
@@ -67,6 +101,9 @@ export interface Database {
   comments: CommentsTable
   user_profiles: UserProfilesTable
   post_reactions: PostReactionsTable
+  post_reports: PostReportsTable
+  user_bans: UserBansTable
+  user_ip_log: UserIpLogTable
 }
 
 // ─── Create Kysely instance ─────────────────────────────────────────
