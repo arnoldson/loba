@@ -13,8 +13,22 @@ jobs:
       - name: Install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Ping Supabase via direct Postgres connection
+      - name: Keep-alive via insert + delete
         env:
           DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
         run: |
-          psql "$DATABASE_URL" -c "SELECT 1;" -v ON_ERROR_STOP=1
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          -- Dedicated, app-unrelated table so this never touches real data.
+          -- Keep this out of your ORM's schema/migrations on purpose, so
+          -- migrate/push tooling never tries to manage or drop it.
+          CREATE TABLE IF NOT EXISTS _keepalive_ping (
+            id SERIAL PRIMARY KEY,
+            pinged_at TIMESTAMPTZ NOT NULL DEFAULT now()
+          );
+
+          INSERT INTO _keepalive_ping (pinged_at) VALUES (now());
+
+          -- Keep the table from growing forever; also gives Supabase a
+          -- delete to see, not just an insert.
+          DELETE FROM _keepalive_ping WHERE pinged_at < now() - interval '1 day';
+          SQL
