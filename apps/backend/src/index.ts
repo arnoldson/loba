@@ -18,9 +18,16 @@ import { devAuthRoutes } from "./routes/dev-auth.js"
 import { commentRoutes } from "./routes/comments.js"
 import { reactionRoutes } from "./routes/reactions.js"
 import { accountRoutes } from "./routes/account.js"
+import { moderationRoutes } from "./routes/moderation.js"
+import { authStatusRoutes } from "./routes/auth-status.js"
+import { authLoginRoutes } from "./routes/auth-login.js"
 
 // Create Fastify instance
 const fastify = Fastify({
+  // Railway terminates TLS and proxies requests, so without this,
+  // request.ip is Railway's internal proxy address for every request,
+  // not the real client IP. Needed for user_ip_log (#24) to mean anything.
+  trustProxy: true,
   logger: {
     transport: {
       target: "pino-pretty",
@@ -102,6 +109,9 @@ await fastify.register(postRoutes, { prefix: "/api" })
 await fastify.register(reactionRoutes, { prefix: "/api" })
 await fastify.register(commentRoutes, { prefix: "/api" })
 await fastify.register(accountRoutes, { prefix: "/api" })
+await fastify.register(moderationRoutes, { prefix: "/api" })
+await fastify.register(authStatusRoutes, { prefix: "/api" })
+await fastify.register(authLoginRoutes, { prefix: "/api" })
 await fastify.register(postsSpatialRoutes)
 
 // Escape hatch for scripts/lib/route-table.mjs: print the route table and

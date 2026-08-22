@@ -9,25 +9,38 @@ import { AuthProvider, useAuth } from "@/utils/auth"
  * - Has session but on /login → redirect to /(tabs)
  */
 function AuthGate() {
-  const { session, isLoading } = useAuth()
+  const { session, isLoading, isBanned } = useAuth()
   const segments = useSegments()
   const router = useRouter()
 
+  // A session existing but isBanned still null (unchecked) is treated
+  // as a loading state too, not just isLoading itself. Without this, a
+  // banned user could briefly see /(tabs) render with real data on
+  // every fresh login/cold boot/resume, until the ping check resolved
+  // — exactly the flash-of-access window #24 was built to close. Cost:
+  // a brief spinner on every session establishment, not just fresh
+  // logins. Deliberate tradeoff — see #24 design discussion.
+  const stillResolvingBanStatus = !!session && isBanned === null
+
   useEffect(() => {
-    if (isLoading) return
+    if (isLoading || stillResolvingBanStatus) return
 
     const onLoginScreen = segments[0] === "login"
+    const onSuspendedScreen = segments[0] === "suspended"
 
     if (!session && !onLoginScreen) {
       // Not logged in and not on login screen → go to login
       router.replace("/login")
-    } else if (session && onLoginScreen) {
-      // Logged in but still on login screen → go to app
+    } else if (session && isBanned && !onSuspendedScreen) {
+      // Banned → hard lockout, not just blocked writes.
+      router.replace("/suspended")
+    } else if (session && !isBanned && (onLoginScreen || onSuspendedScreen)) {
+      // Logged in, not banned, but stuck on login/suspended → go to app
       router.replace("/(tabs)")
     }
-  }, [session, isLoading, segments, router])
+  }, [session, isLoading, isBanned, stillResolvingBanStatus, segments, router])
 
-  if (isLoading) {
+  if (isLoading || stillResolvingBanStatus) {
     return (
       <View
         style={{
@@ -45,6 +58,7 @@ function AuthGate() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="login" />
+      <Stack.Screen name="suspended" />
       <Stack.Screen name="(tabs)" />
     </Stack>
   )

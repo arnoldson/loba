@@ -30,6 +30,7 @@ export type UserProfile = {
   user_id: string
   verification_status: "unverified" | "pending" | "verified" | "rejected"
   verified_at: string | null
+  restriction_status: "none" | "pending_review"
   created_at: string
   updated_at: string
 }
@@ -95,6 +96,12 @@ export type ReactToPostRequest = {
   longitude: number
 }
 
+export type ReportReason = "spam" | "harassment" | "illegal" | "other"
+
+export type ReportPostRequest = {
+  reason: ReportReason
+}
+
 // ─── API Response types ─────────────────────────────────────────────
 
 export type CreatePostResponse = {
@@ -142,11 +149,28 @@ export type AuthStatusResponse = {
   verification_status: UserProfile["verification_status"]
 }
 
+/**
+ * Response for GET /api/auth/ping — a minimal "am I currently allowed to
+ * use the account" check. Reaching a 200 here already means the caller
+ * passed requireAuth's ban check, so there's nothing else to report;
+ * a banned user never reaches the handler at all (403 from middleware),
+ * which is what the client treats as "banned" — see AuthGate.
+ */
+export type AuthPingResponse = {
+  success: true
+}
+
+export type ReportPostResponse = {
+  success: boolean
+  error?: string
+}
+
 // ─── Utility types ──────────────────────────────────────────────────
 
 export type ApiError = {
   success: false
   error: string
+  code?: "banned" | "restricted"
 }
 
 // ─── Shared runtime utilities ────────────────────────────────────────

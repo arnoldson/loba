@@ -247,7 +247,16 @@ export default function HomeScreen() {
         })
 
         if (!response.ok) {
-          throw new Error("Failed to fetch posts")
+          let code: string | undefined
+          try {
+            const errBody = await response.json()
+            code = errBody?.code
+          } catch {
+            // Response wasn't JSON — fall through, code stays undefined
+          }
+          throw new Error(
+            code === "banned" ? "BANNED_ACCOUNT" : "Failed to fetch posts",
+          )
         }
 
         const data = await response.json()
@@ -281,7 +290,16 @@ export default function HomeScreen() {
           console.log(`💾 Supertile cache: ${supertileCache.size} tiles`)
         }
       } catch (error) {
-        console.error("❌ Error fetching posts:", error)
+        // The global ban interceptor (utils/auth.tsx) already handles
+        // redirecting to /suspended for this case — logging it here too
+        // is just noise on a screen the user's about to leave anyway.
+        const isBannedError =
+          error instanceof Error && error.message === "BANNED_ACCOUNT"
+
+        if (!isBannedError) {
+          console.error("❌ Error fetching posts:", error)
+        }
+
         const grouping = getGroupingFactor(getZoomLevel(region.latitudeDelta))
         if (grouping) {
           const viewportBounds = getBoundingBox(region)

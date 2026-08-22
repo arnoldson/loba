@@ -1,1 +1,5 @@
 2026-07-30T06:32:03.915Z  ACKNOWLEDGED ungated production route: DELETE /api/account
+2026-08-22T03:03:56.421Z  ACKNOWLEDGED ungated production route: GET /api/auth/ping
+2026-08-22T03:04:07.017Z  ACKNOWLEDGED ungated production route: HEAD /api/auth/ping
+2026-08-22T03:04:20.441Z  ACKNOWLEDGED ungated production route: POST /api/auth/login
+2026-08-22T03:04:26.586Z  ACKNOWLEDGED ungated production route: POST /api/posts/:id/report

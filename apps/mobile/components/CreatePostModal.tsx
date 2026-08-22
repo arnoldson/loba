@@ -12,7 +12,7 @@ import {
 } from "react-native"
 import type { CreatePostRequest, CreatePostResponse } from "@loba/shared"
 import { useAuth } from "@/utils/auth"
-import { API_URL } from "@/utils/api"
+import { API_URL, isBannedError, UNDER_REVIEW_MESSAGE } from "@/utils/api"
 
 interface CreatePostModalProps {
   visible: boolean
@@ -87,6 +87,11 @@ export function CreatePostModal({
       const data: CreatePostResponse = await response.json()
 
       if (!response.ok || !data.success) {
+        if (isBannedError(data)) {
+          // Interceptor in utils/auth.tsx already handles the redirect
+          // to /suspended — nothing to show here.
+          return
+        }
         throw new Error(data.error || "Failed to create post")
       }
 
@@ -96,11 +101,15 @@ export function CreatePostModal({
       setPostText("")
       onClose()
     } catch (error) {
-      Alert.alert(
-        "Error",
-        error instanceof Error ? error.message : "Failed to create post",
-      )
-      console.error(error)
+      const message =
+        error instanceof Error ? error.message : "Failed to create post"
+
+      if (message.startsWith("This account is under review")) {
+        Alert.alert("Account under review", UNDER_REVIEW_MESSAGE)
+      } else {
+        Alert.alert("Error", message)
+        console.error(error)
+      }
     }
   }
 

@@ -13,8 +13,13 @@ import {
   Platform,
 } from "react-native"
 import type { SuperTile } from "@/utils/postGrouping"
-import type { PublicPost, PublicComment } from "@loba/shared"
-import { API_URL } from "@/utils/api"
+import type { PublicPost, PublicComment, ReportReason } from "@loba/shared"
+import {
+  API_URL,
+  isBannedError,
+  isRestrictedError,
+  UNDER_REVIEW_MESSAGE,
+} from "@/utils/api"
 
 // ─── Configuration ──────────────────────────────────────────────────
 
@@ -46,9 +51,18 @@ export function TileDetailsModal({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Separate from `error` deliberately — this is for expected,
+  // non-alarming states (like the under-review restriction) that
+  // shouldn't render with error styling, unlike a genuine failure.
+  const [infoMessage, setInfoMessage] = useState<string | null>(null)
 
   // Track deleted post IDs so they disappear from the list immediately
   const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set())
+
+  // Track reported post IDs so the report button reflects it immediately
+  // (backend also enforces this via a unique constraint — this is just
+  // for UI feedback, not the source of truth)
+  const [reportedPostIds, setReportedPostIds] = useState<Set<string>>(new Set())
 
   // Track local reaction state so UI updates immediately
   const [localReactions, setLocalReactions] = useState<
@@ -95,6 +109,7 @@ export function TileDetailsModal({
     async (postId: string) => {
       setIsLoadingComments(true)
       setError(null)
+      setInfoMessage(null)
       try {
         const res = await fetch(`${API_URL}/api/posts/${postId}/comments`, {
           headers: authHeaders,
@@ -103,7 +118,7 @@ export function TileDetailsModal({
 
         if (data.success) {
           setComments(data.comments)
-        } else {
+        } else if (!isBannedError(data)) {
           setError(data.error || "Failed to load comments")
         }
       } catch {
@@ -121,6 +136,7 @@ export function TileDetailsModal({
       setComments([])
       setNewComment("")
       setError(null)
+      setInfoMessage(null)
       fetchComments(post.id)
     },
     [fetchComments],
@@ -131,6 +147,7 @@ export function TileDetailsModal({
     setComments([])
     setNewComment("")
     setError(null)
+    setInfoMessage(null)
   }, [])
 
   const handleClose = useCallback(() => {
@@ -138,6 +155,7 @@ export function TileDetailsModal({
     setComments([])
     setNewComment("")
     setError(null)
+    setInfoMessage(null)
     setDeletedPostIds(new Set())
     setLocalReactions(new Map())
     onClose()
@@ -148,6 +166,7 @@ export function TileDetailsModal({
 
     setIsSubmitting(true)
     setError(null)
+    setInfoMessage(null)
     try {
       const res = await fetch(
         `${API_URL}/api/posts/${selectedPost.id}/comments`,
@@ -169,7 +188,9 @@ export function TileDetailsModal({
       if (data.success) {
         setComments((prev) => [...prev, data.comment])
         setNewComment("")
-      } else {
+      } else if (isRestrictedError(data)) {
+        setInfoMessage(UNDER_REVIEW_MESSAGE)
+      } else if (!isBannedError(data)) {
         setError(data.error || "Failed to post comment")
       }
     } catch {
@@ -306,7 +327,9 @@ export function TileDetailsModal({
 
                   setDeletedPostIds((prev) => new Set(prev).add(post.id))
                   onPostDeleted?.(post.id)
-                } else {
+                } else if (isRestrictedError(data)) {
+                  Alert.alert("Account under review", UNDER_REVIEW_MESSAGE)
+                } else if (!isBannedError(data)) {
                   Alert.alert("Error", data.error || "Failed to delete post")
                 }
               } catch {
@@ -344,7 +367,9 @@ export function TileDetailsModal({
 
               if (data.success) {
                 setComments((prev) => prev.filter((c) => c.id !== comment.id))
-              } else {
+              } else if (isRestrictedError(data)) {
+                Alert.alert("Account under review", UNDER_REVIEW_MESSAGE)
+              } else if (!isBannedError(data)) {
                 Alert.alert("Error", data.error || "Failed to delete comment")
               }
             } catch {
@@ -355,6 +380,50 @@ export function TileDetailsModal({
       ])
     },
     [authHeaders, selectedPost],
+  )
+
+  const handleReportPost = useCallback(
+    (post: PublicPost) => {
+      if (reportedPostIds.has(post.id)) return
+
+      const submitReport = async (reason: ReportReason) => {
+        try {
+          const res = await fetch(`${API_URL}/api/posts/${post.id}/report`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...authHeaders,
+            },
+            body: JSON.stringify({ reason }),
+          })
+          const data = await res.json()
+
+          if (data.success) {
+            setReportedPostIds((prev) => new Set(prev).add(post.id))
+            Alert.alert("Reported", "Thanks — we'll take a look at this post.")
+          } else if (res.status === 409) {
+            // Already reported — treat as success from the UI's
+            // perspective, just sync local state
+            setReportedPostIds((prev) => new Set(prev).add(post.id))
+          } else if (isRestrictedError(data)) {
+            Alert.alert("Account under review", UNDER_REVIEW_MESSAGE)
+          } else if (!isBannedError(data)) {
+            Alert.alert("Error", data.error || "Failed to report post")
+          }
+        } catch {
+          Alert.alert("Error", "Could not connect to server")
+        }
+      }
+
+      Alert.alert("Report this post", "Why are you reporting this post?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Spam", onPress: () => submitReport("spam") },
+        { text: "Harassment", onPress: () => submitReport("harassment") },
+        { text: "Illegal content", onPress: () => submitReport("illegal") },
+        { text: "Other", onPress: () => submitReport("other") },
+      ])
+    },
+    [authHeaders, reportedPostIds],
   )
 
   // ─── Render ─────────────────────────────────────────────────────────
@@ -418,9 +487,12 @@ export function TileDetailsModal({
               comments={comments}
               isLoading={isLoadingComments}
               error={error}
+              infoMessage={infoMessage}
               onDeletePost={handleDeletePost}
               onDeleteComment={handleDeleteComment}
               onReaction={handleReaction}
+              onReportPost={handleReportPost}
+              isReported={reportedPostIds.has(selectedPost.id)}
               isDeleting={isDeleting}
               canReact={canReact}
             />
@@ -803,9 +875,12 @@ function PostDetailView({
   comments,
   isLoading,
   error,
+  infoMessage,
   onDeletePost,
   onDeleteComment,
   onReaction,
+  onReportPost,
+  isReported,
   isDeleting,
   canReact,
 }: {
@@ -813,9 +888,12 @@ function PostDetailView({
   comments: PublicComment[]
   isLoading: boolean
   error: string | null
+  infoMessage: string | null
   onDeletePost: (post: PublicPost) => void
   onDeleteComment: (comment: PublicComment) => void
   onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void
+  onReportPost: (post: PublicPost) => void
+  isReported: boolean
   isDeleting: boolean
   canReact: boolean
 }) {
@@ -840,6 +918,18 @@ function PostDetailView({
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Text style={styles.deleteButtonText}>🗑</Text>
+            </TouchableOpacity>
+          )}
+          {!post.is_own && (
+            <TouchableOpacity
+              style={styles.reportButton}
+              onPress={() => onReportPost(post)}
+              disabled={isReported}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={styles.reportButtonText}>
+                {isReported ? "Reported" : "🚩"}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
@@ -882,6 +972,7 @@ function PostDetailView({
         )}
 
         {error && <Text style={styles.errorText}>{error}</Text>}
+        {infoMessage && <Text style={styles.infoText}>{infoMessage}</Text>}
 
         {!isLoading &&
           comments.map((comment) => (
@@ -1048,6 +1139,14 @@ const styles = StyleSheet.create({
   deleteButtonTextSm: {
     fontSize: 12,
   },
+  reportButton: {
+    marginLeft: "auto",
+    padding: 4,
+  },
+  reportButtonText: {
+    fontSize: 12,
+    color: "#999",
+  },
   postContent: {
     fontSize: 16,
     lineHeight: 22,
@@ -1162,6 +1261,12 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 14,
     color: "#d32f2f",
+    textAlign: "center",
+    paddingVertical: 8,
+  },
+  infoText: {
+    fontSize: 14,
+    color: "#999",
     textAlign: "center",
     paddingVertical: 8,
   },
