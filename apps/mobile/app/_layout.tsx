@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { ActivityIndicator, View } from "react-native"
+import { ActivityIndicator, StyleSheet, View } from "react-native"
 import { Stack, useRouter, useSegments } from "expo-router"
 import { AuthProvider, useAuth } from "@/utils/auth"
 
@@ -21,9 +21,10 @@ function AuthGate() {
   // a brief spinner on every session establishment, not just fresh
   // logins. Deliberate tradeoff — see #24 design discussion.
   const stillResolvingBanStatus = !!session && isBanned === null
+  const isReady = !isLoading && !stillResolvingBanStatus
 
   useEffect(() => {
-    if (isLoading || stillResolvingBanStatus) return
+    if (!isReady) return
 
     const onLoginScreen = segments[0] === "login"
     const onSuspendedScreen = segments[0] === "suspended"
@@ -38,29 +39,42 @@ function AuthGate() {
       // Logged in, not banned, but stuck on login/suspended → go to app
       router.replace("/(tabs)")
     }
-  }, [session, isLoading, isBanned, stillResolvingBanStatus, segments, router])
+  }, [session, isLoading, isBanned, isReady, segments, router])
 
-  if (isLoading || stillResolvingBanStatus) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: "#fff",
-        }}
-      >
-        <ActivityIndicator size="large" color="#007AFF" />
-      </View>
-    )
-  }
-
+  // The Stack (and its route table, including "(tabs)") stays mounted
+  // regardless of isReady. Previously this returned the spinner in
+  // place of the Stack while loading — meaning "(tabs)" didn't exist
+  // as a registered route yet on the very first render where isReady
+  // flips true, which is also the render where the effect above fires
+  // and calls router.replace("/(tabs)"). Mounting the Stack and firing
+  // a replace into it happened in the same pass, racing whether the
+  // navigator had actually finished registering its screens yet —
+  // hence the "not handled by any navigator" warning. Keeping the
+  // Stack always mounted removes the race entirely: the route table
+  // exists before any navigate call is ever made.
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="login" />
-      <Stack.Screen name="suspended" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="login" />
+        <Stack.Screen name="suspended" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+
+      {!isReady && (
+        <View
+          style={[
+            StyleSheet.absoluteFillObject,
+            {
+              justifyContent: "center",
+              alignItems: "center",
+              backgroundColor: "#fff",
+            },
+          ]}
+        >
+          <ActivityIndicator size="large" color="#007AFF" />
+        </View>
+      )}
+    </>
   )
 }
 
