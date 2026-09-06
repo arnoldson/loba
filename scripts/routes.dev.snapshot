@@ -7,6 +7,7 @@
   "GET /api/dev/me",
   "GET /api/posts/:id",
   "GET /api/posts/:postId/comments",
+  "GET /api/posts/by-supertile/:supertileId",
   "GET /api/posts/in-bounds/test",
   "GET /api/posts/mine",
   "GET /api/seed/stats",
@@ -18,6 +19,7 @@
   "HEAD /api/dev/me",
   "HEAD /api/posts/:id",
   "HEAD /api/posts/:postId/comments",
+  "HEAD /api/posts/by-supertile/:supertileId",
   "HEAD /api/posts/in-bounds/test",
   "HEAD /api/posts/mine",
   "HEAD /api/seed/stats",
@@ -34,6 +36,7 @@
   "POST /api/posts/:id/report",
   "POST /api/posts/:postId/comments",
   "POST /api/posts/by-tiles",
+  "POST /api/posts/density-in-bounds",
   "POST /api/posts/in-bounds",
   "POST /api/seed"
 ]

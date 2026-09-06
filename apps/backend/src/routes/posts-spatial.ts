@@ -19,6 +19,15 @@ interface PostsInBoundsRequest {
   tags?: string[]
 }
 
+interface PostsDensityRequest {
+  minLat: number
+  maxLat: number
+  minLng: number
+  maxLng: number
+  groupingFactor: number
+  tags?: string[]
+}
+
 export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
   const postService = new PostService()
 
@@ -79,6 +88,156 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(500).send({
           success: false,
           error: "Failed to fetch posts",
+          details: error instanceof Error ? error.message : "Unknown error",
+        })
+      }
+    },
+  )
+
+  /**
+   * POST /api/posts/density-in-bounds
+   * Get post counts grouped by supertile within a geographic bounding box.
+   * Returns aggregate counts only — no post content — for cheap map-view
+   * rendering. Client is expected to pre-snap bounds to the supertile grid
+   * (see snapBoundsToGrid in postGrouping.ts) so bbox filtering and
+   * grid-cell membership agree exactly; no partial-cell edge cases here.
+   */
+  fastify.post(
+    "/api/posts/density-in-bounds",
+    { preHandler: [optionalAuth] },
+    async (request, reply) => {
+      const { minLat, maxLat, minLng, maxLng, groupingFactor, tags } =
+        request.body as PostsDensityRequest
+
+      const cleanTags =
+        tags && Array.isArray(tags) && tags.length > 0
+          ? tags.filter((t) => typeof t === "string" && t.trim().length > 0)
+          : undefined
+
+      if (
+        minLat == null ||
+        maxLat == null ||
+        minLng == null ||
+        maxLng == null ||
+        groupingFactor == null
+      ) {
+        return reply.status(400).send({
+          success: false,
+          error:
+            "Missing required fields: minLat, maxLat, minLng, maxLng, groupingFactor",
+        })
+      }
+
+      // groupingFactor must be a positive power of 2, matching the
+      // SuperTile grid (see getGroupingFactor in utils/tiles.ts). A
+      // client-supplied non-power-of-2 value would silently produce a
+      // grid the frontend's own grouping math never generates.
+      const isPositivePowerOfTwo =
+        Number.isInteger(groupingFactor) &&
+        groupingFactor > 0 &&
+        (groupingFactor & (groupingFactor - 1)) === 0
+
+      if (!isPositivePowerOfTwo) {
+        return reply.status(400).send({
+          success: false,
+          error: "groupingFactor must be a positive power of 2",
+        })
+      }
+
+      try {
+        const density = await postService.getPostDensity(
+          { minLat, maxLat, minLng, maxLng },
+          groupingFactor,
+          cleanTags,
+        )
+
+        return {
+          success: true,
+          density,
+          groupingFactor,
+          filtered_by_tags: cleanTags || null,
+        }
+      } catch (error) {
+        fastify.log.error(error)
+        return reply.status(500).send({
+          success: false,
+          error: "Failed to fetch post density",
+          details: error instanceof Error ? error.message : "Unknown error",
+        })
+      }
+    },
+  )
+
+  /**
+   * GET /api/posts/by-supertile/:supertileId
+   * Paginated posts for a single supertile — backs TileDetailsModal.
+   * Cursor-based via ?after=<createdAt>,<id> so results stay stable
+   * under TTL churn while a user is scrolling.
+   */
+  fastify.get(
+    "/api/posts/by-supertile/:supertileId",
+    { preHandler: [optionalAuth] },
+    async (request, reply) => {
+      const { supertileId } = request.params as { supertileId: string }
+      const { groupingFactor, after, limit } = request.query as {
+        groupingFactor?: string
+        after?: string
+        limit?: string
+      }
+
+      if (!supertileId || !/^-?\d+:-?\d+$/.test(supertileId)) {
+        return reply.status(400).send({
+          success: false,
+          error: "Invalid supertileId — expected format 'latTile:lngTile'",
+        })
+      }
+
+      const parsedGroupingFactor = Number(groupingFactor)
+      if (
+        !Number.isInteger(parsedGroupingFactor) ||
+        parsedGroupingFactor <= 0
+      ) {
+        return reply.status(400).send({
+          success: false,
+          error: "Missing or invalid groupingFactor",
+        })
+      }
+
+      let cursor: { createdAt: string; id: string } | undefined
+      if (after) {
+        const [createdAt, id] = after.split(",")
+        if (!createdAt || !id) {
+          return reply.status(400).send({
+            success: false,
+            error: "Invalid 'after' cursor — expected '<createdAt>,<id>'",
+          })
+        }
+        cursor = { createdAt, id }
+      }
+
+      const parsedLimit = Math.min(Number(limit) || 25, 50)
+
+      try {
+        const { posts, nextCursor } = await postService.getPostsInSupertile(
+          supertileId,
+          parsedGroupingFactor,
+          request.userId,
+          cursor,
+          parsedLimit,
+        )
+
+        return {
+          success: true,
+          posts,
+          nextCursor: nextCursor
+            ? `${nextCursor.createdAt},${nextCursor.id}`
+            : null,
+        }
+      } catch (error) {
+        fastify.log.error(error)
+        return reply.status(500).send({
+          success: false,
+          error: "Failed to fetch supertile posts",
           details: error instanceof Error ? error.message : "Unknown error",
         })
       }

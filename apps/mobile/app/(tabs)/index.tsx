@@ -11,16 +11,23 @@ import {
 } from "react-native"
 import MapView, { Marker, Region } from "react-native-maps"
 import { TileMarker } from "@/components/TileMarker"
-import { TileDetailsModal } from "@/components/TileDetailsModal"
+import {
+  TileDetailsModal,
+  type SelectedTile,
+} from "@/components/TileDetailsModal"
 import { CreatePostModal } from "@/components/CreatePostModal"
 import { TagFilterBar, type PopularTag } from "@/components/TagFilterBar"
-import { getZoomLevel, getGroupingFactor } from "@/utils/tiles"
 import {
-  type SuperTile,
-  SupertileCache,
+  getZoomLevel,
+  getGroupingFactor,
+  getSupertileCenter,
+  getSupertileId,
+} from "@/utils/tiles"
+import {
+  DensityCache,
+  type DensityEntry,
   getVisibleSupertileIds,
   snapBoundsToGrid,
-  groupPostsIntoSupertiles,
   type Bounds,
 } from "@/utils/postGrouping"
 import { getBoundingBox, getVisibleAreaMeters } from "@/utils/mapBounds"
@@ -79,11 +86,19 @@ export default function HomeScreen() {
   const [popularTags, setPopularTags] = useState<PopularTag[]>([])
   const [isLoadingTags, setIsLoadingTags] = useState(true)
 
-  // Supertile cache — THE source of truth for all tile data.
-  const supertileCache = useRef(new SupertileCache()).current
+  // Density cache — counts only, no post content. THE source of truth
+  // for map-view marker data now that the map fetches aggregate counts
+  // instead of raw posts (see /api/posts/density-in-bounds).
+  const densityCache = useRef(new DensityCache()).current
 
   // The supertiles currently visible on screen — derived from the cache.
-  const [visibleSupertiles, setVisibleSupertiles] = useState<SuperTile[]>([])
+  const [visibleSupertiles, setVisibleSupertiles] = useState<
+    {
+      supertile_id: string
+      count: number
+      center: { latitude: number; longitude: number }
+    }[]
+  >([])
 
   // Whether newly-added markers should still be tracked for re-snapshotting.
   // iOS can take a custom marker's view snapshot before its first layout pass
@@ -101,7 +116,7 @@ export default function HomeScreen() {
 
   // Modal visibility
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false)
-  const [selectedTile, setSelectedTile] = useState<SuperTile | null>(null)
+  const [selectedTile, setSelectedTile] = useState<SelectedTile | null>(null)
   const [isTileModalVisible, setIsTileModalVisible] = useState(false)
 
   // Track renders for performance monitoring
@@ -159,6 +174,11 @@ export default function HomeScreen() {
     async (region: Region, tags?: string[]) => {
       const fetchStartTime = Date.now()
 
+      // getCenter helper bound to the current grouping factor — DensityCache
+      // doesn't store centers itself, they're cheap to derive on demand.
+      const makeGetCenter = (grouping: number) => (id: string) =>
+        getSupertileCenter(id, grouping)
+
       try {
         if (isLoadingPosts) {
           console.log("⏭️  Skipping fetch - already loading")
@@ -166,14 +186,10 @@ export default function HomeScreen() {
         }
 
         const currentZoom = getZoomLevel(region.latitudeDelta)
+        // Viewing is never zoom-restricted (standing decision) — grouping
+        // always returns a factor now, no null/too-zoomed-out case.
         const grouping = getGroupingFactor(currentZoom)
-
-        if (!grouping || currentZoom < 13) {
-          console.log(`⏸️  Zoom ${currentZoom} too low - clearing`)
-          supertileCache.clear()
-          setVisibleSupertiles([])
-          return
-        }
+        const getCenter = makeGetCenter(grouping)
 
         // When tags are active, skip the cache optimization and always fetch
         // fresh data so filtering is accurate.
@@ -191,17 +207,17 @@ export default function HomeScreen() {
 
         // 2. Check which are missing from cache (skip when filtering by tags)
         if (!hasTags) {
-          const missingIds = supertileCache.getMissing(visibleIds, grouping)
+          const missingIds = densityCache.getMissing(visibleIds, grouping)
 
           if (missingIds.size === 0) {
             // Everything is cached — just update the display, no fetch needed!
             console.log(`✅ Full cache hit — ${visibleIds.size} supertiles`)
-            setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+            setVisibleSupertiles(densityCache.getVisible(visibleIds, getCenter))
 
             // Evict supertiles far from viewport (3× buffer)
             const evictionBounds = expandRegionToBounds(region, 3.0)
             const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
-            supertileCache.evictOutside(keepIds)
+            densityCache.evictOutside(keepIds)
             return
           }
 
@@ -214,13 +230,14 @@ export default function HomeScreen() {
 
         // 3. Show what we have from cache immediately (no blank screen)
         if (!hasTags) {
-          const cachedTiles = supertileCache.getVisible(visibleIds)
+          const cachedTiles = densityCache.getVisible(visibleIds, getCenter)
           if (cachedTiles.length > 0) {
             setVisibleSupertiles(cachedTiles)
           }
         }
 
-        // 4. Fetch the snapped bounding box (aligned to supertile grid)
+        // 4. Fetch the snapped bounding box (aligned to supertile grid) —
+        // density counts only, no post content.
         const snappedBounds = snapBoundsToGrid(viewportBounds, grouping)
         const area = getVisibleAreaMeters(region)
 
@@ -235,12 +252,15 @@ export default function HomeScreen() {
           )}, ${snappedBounds.maxLng.toFixed(4)}]`,
         )
 
-        const body: Record<string, any> = { ...snappedBounds }
+        const body: Record<string, any> = {
+          ...snappedBounds,
+          groupingFactor: grouping,
+        }
         if (hasTags) {
           body.tags = tags
         }
 
-        const response = await fetch(`${API_URL}/api/posts/in-bounds`, {
+        const response = await fetch(`${API_URL}/api/posts/density-in-bounds`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify(body),
@@ -255,7 +275,9 @@ export default function HomeScreen() {
             // Response wasn't JSON — fall through, code stays undefined
           }
           throw new Error(
-            code === "banned" ? "BANNED_ACCOUNT" : "Failed to fetch posts",
+            code === "banned"
+              ? "BANNED_ACCOUNT"
+              : "Failed to fetch post density",
           )
         }
 
@@ -263,31 +285,30 @@ export default function HomeScreen() {
 
         if (data.success) {
           const fetchDuration = Date.now() - fetchStartTime
+          const density: DensityEntry[] = data.density
           console.log(
-            `✅ Fetched ${data.posts.length} posts (DB: ${
+            `✅ Fetched ${density.length} supertile counts (DB: ${
               data.dbQueryTime || "N/A"
             }ms, Total: ${fetchDuration}ms)`,
           )
-          perfMonitor.logFetch(fetchDuration, data.posts.length)
+          perfMonitor.logFetch(fetchDuration, density.length)
 
-          // 5. Group into supertiles and add to cache
-          const newSupertiles = groupPostsIntoSupertiles(data.posts, grouping)
-
+          // 5. Add to cache
           if (hasTags) {
-            supertileCache.clear()
+            densityCache.clear()
           }
 
-          supertileCache.addSupertiles(newSupertiles, grouping)
+          densityCache.addDensity(density, grouping)
 
           // 6. Update display from cache
-          setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+          setVisibleSupertiles(densityCache.getVisible(visibleIds, getCenter))
 
           // 7. Evict far-away supertiles (keep 3× viewport as buffer)
           const evictionBounds = expandRegionToBounds(region, 3.0)
           const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
-          supertileCache.evictOutside(keepIds)
+          densityCache.evictOutside(keepIds)
 
-          console.log(`💾 Supertile cache: ${supertileCache.size} tiles`)
+          console.log(`💾 Density cache: ${densityCache.size} tiles`)
         }
       } catch (error) {
         // The global ban interceptor (utils/auth.tsx) already handles
@@ -297,25 +318,24 @@ export default function HomeScreen() {
           error instanceof Error && error.message === "BANNED_ACCOUNT"
 
         if (!isBannedError) {
-          console.error("❌ Error fetching posts:", error)
+          console.error("❌ Error fetching post density:", error)
         }
 
         const grouping = getGroupingFactor(getZoomLevel(region.latitudeDelta))
-        if (grouping) {
-          const viewportBounds = getBoundingBox(region)
-          const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
-          setVisibleSupertiles(supertileCache.getVisible(visibleIds))
-        }
+        const getCenter = makeGetCenter(grouping)
+        const viewportBounds = getBoundingBox(region)
+        const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
+        setVisibleSupertiles(densityCache.getVisible(visibleIds, getCenter))
       } finally {
         setIsLoadingPosts(false)
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [supertileCache],
+    [densityCache],
   )
 
   // Re-fetch when tags change.
-  // Intentionally only depends on selectedTags — fetchVisiblePosts and supertileCache
+  // Intentionally only depends on selectedTags — fetchVisiblePosts and densityCache
   // are stable refs that don't need to trigger this effect.
   useEffect(() => {
     if (!hasInitialFetched.current) return
@@ -323,7 +343,7 @@ export default function HomeScreen() {
     const region = lastRegion.current
     if (!region) return
 
-    supertileCache.clear()
+    densityCache.clear()
     setVisibleSupertiles([])
     fetchVisiblePosts(region, selectedTags)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -420,10 +440,16 @@ export default function HomeScreen() {
 
   // Called by CreatePostModal after a successful post
   const handlePostCreated = useCallback(
-    (post: any) => {
+    (post: { tile_id: string }) => {
       const grouping = getGroupingFactor(zoom)
-      if (grouping && location) {
-        supertileCache.addPost(post, grouping)
+      if (location) {
+        // Optimistic +1 on the supertile this post landed in — not
+        // authoritative, the next real fetch reconciles with the
+        // server's true count. We don't have raw post content to cache
+        // anymore, only the aggregate.
+        const supertileId = getSupertileId(post.tile_id, grouping)
+        densityCache.incrementCount(supertileId, grouping)
+
         const region: Region = {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
@@ -432,7 +458,11 @@ export default function HomeScreen() {
         }
         const viewportBounds = getBoundingBox(region)
         const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
-        setVisibleSupertiles(supertileCache.getVisible(visibleIds))
+        setVisibleSupertiles(
+          densityCache.getVisible(visibleIds, (id) =>
+            getSupertileCenter(id, grouping),
+          ),
+        )
       }
       // A new post may introduce a new tag, or bump an existing tag's
       // count — refresh immediately rather than waiting for the next
@@ -448,23 +478,33 @@ export default function HomeScreen() {
       }
       fetchPopularTags(tagsRegion)
     },
-    [zoom, location, supertileCache, fetchPopularTags],
+    [zoom, location, densityCache, fetchPopularTags],
   )
 
-  // Called by TileDetailsModal after a post is deleted
+  // Called by TileDetailsModal after a post is deleted. Invalidates just
+  // the affected supertile's cached count rather than the whole cache —
+  // the modal knows which supertile it's showing, so this stays a
+  // cheap, targeted invalidation instead of a full re-fetch of everything
+  // visible.
   const handlePostDeleted = useCallback(
     (_postId: string) => {
-      supertileCache.clear()
+      if (selectedTile) {
+        densityCache.invalidate(selectedTile.supertile_id)
+      }
       const region = lastRegion.current
       if (region) {
         fetchVisiblePosts(region, selectedTags)
       }
     },
-    [supertileCache, fetchVisiblePosts, selectedTags],
+    [densityCache, fetchVisiblePosts, selectedTags, selectedTile],
   )
 
-  const handleTilePress = (tile: SuperTile) => {
-    setSelectedTile(tile)
+  const handleTilePress = (tile: {
+    supertile_id: string
+    count: number
+    center: { latitude: number; longitude: number }
+  }) => {
+    setSelectedTile({ ...tile, groupingFactor })
     setIsTileModalVisible(true)
   }
 
@@ -569,12 +609,6 @@ export default function HomeScreen() {
         onTagsChanged={handleTagsChanged}
       />
 
-      {groupingFactor === null && (
-        <View style={styles.zoomHint}>
-          <Text style={styles.zoomHintText}>Zoom in to see posts</Text>
-        </View>
-      )}
-
       {isLoadingPosts && (
         <View style={styles.loadingIndicator}>
           <ActivityIndicator size="small" color="#007AFF" />
@@ -675,20 +709,6 @@ const styles = StyleSheet.create({
   recenterButtonText: {
     fontSize: 24,
     color: "#007AFF",
-  },
-  zoomHint: {
-    position: "absolute",
-    top: 60,
-    alignSelf: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-  },
-  zoomHintText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "500",
   },
   loadingIndicator: {
     position: "absolute",

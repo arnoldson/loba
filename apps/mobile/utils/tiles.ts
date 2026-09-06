@@ -4,35 +4,35 @@
  */
 
 // Each tile is 3m × 3m
-const TILE_SIZE_METERS = 3;
+const TILE_SIZE_METERS = 3
 
 /**
  * Calculate tile ID from GPS coordinates
  * Format: "latTile:lngTile"
  */
 export function getTileId(lat: number, lng: number): string {
-  const latTile = Math.floor((lat * 111320) / TILE_SIZE_METERS);
+  const latTile = Math.floor((lat * 111320) / TILE_SIZE_METERS)
   const lngTile = Math.floor(
-    (lng * 111320 * Math.cos((lat * Math.PI) / 180)) / TILE_SIZE_METERS
-  );
-  return `${latTile}:${lngTile}`;
+    (lng * 111320 * Math.cos((lat * Math.PI) / 180)) / TILE_SIZE_METERS,
+  )
+  return `${latTile}:${lngTile}`
 }
 
 /**
  * Get center coordinates of a tile
  */
 export function getTileCenter(tileId: string): {
-  latitude: number;
-  longitude: number;
+  latitude: number
+  longitude: number
 } {
-  const [latTile, lngTile] = tileId.split(":").map(Number);
+  const [latTile, lngTile] = tileId.split(":").map(Number)
 
-  const latitude = (latTile * TILE_SIZE_METERS) / 111320;
+  const latitude = (latTile * TILE_SIZE_METERS) / 111320
   const longitude =
     (lngTile * TILE_SIZE_METERS) /
-    (111320 * Math.cos((latitude * Math.PI) / 180));
+    (111320 * Math.cos((latitude * Math.PI) / 180))
 
-  return { latitude, longitude };
+  return { latitude, longitude }
 }
 
 /**
@@ -45,22 +45,22 @@ export function getTileCenter(tileId: string): {
 export function getTileRange(
   centerLat: number,
   centerLng: number,
-  radius: number
+  radius: number,
 ): string[] {
-  const centerTileId = getTileId(centerLat, centerLng);
-  const [centerLatTile, centerLngTile] = centerTileId.split(":").map(Number);
+  const centerTileId = getTileId(centerLat, centerLng)
+  const [centerLatTile, centerLngTile] = centerTileId.split(":").map(Number)
 
-  const tileIds: string[] = [];
+  const tileIds: string[] = []
 
   for (let latOffset = -radius; latOffset <= radius; latOffset++) {
     for (let lngOffset = -radius; lngOffset <= radius; lngOffset++) {
-      const latTile = centerLatTile + latOffset;
-      const lngTile = centerLngTile + lngOffset;
-      tileIds.push(`${latTile}:${lngTile}`);
+      const latTile = centerLatTile + latOffset
+      const lngTile = centerLngTile + lngOffset
+      tileIds.push(`${latTile}:${lngTile}`)
     }
   }
 
-  return tileIds;
+  return tileIds
 }
 
 /**
@@ -68,7 +68,7 @@ export function getTileRange(
  * Based on Google Maps zoom level formula
  */
 export function getZoomLevel(latitudeDelta: number): number {
-  return Math.round(Math.log2(360 / latitudeDelta));
+  return Math.round(Math.log2(360 / latitudeDelta))
 }
 
 /**
@@ -94,19 +94,26 @@ export function getZoomLevel(latitudeDelta: number): number {
  * - Zoom 19: ~120-140 markers (was 147→127 with clustering)
  * - Zoom 20: ~140-150 markers (was 147→147 with clustering)
  */
-export function getGroupingFactor(zoom: number): number | null {
-  if (zoom >= 20) return 1;
-  if (zoom >= 19) return 2;
-  if (zoom >= 18) return 4;
-  if (zoom >= 17) return 8;
-  if (zoom >= 16) return 16;
-  if (zoom >= 15) return 32;
-  if (zoom >= 14) return 64;
-  if (zoom >= 13) return 128;
-  if (zoom >= 11) return 256;
+export function getGroupingFactor(zoom: number): number {
+  if (zoom >= 20) return 1
+  if (zoom >= 19) return 2
+  if (zoom >= 18) return 4
+  if (zoom >= 17) return 8
+  if (zoom >= 16) return 16
+  if (zoom >= 15) return 32
+  if (zoom >= 14) return 64
+  if (zoom >= 13) return 128
+  if (zoom >= 11) return 256
 
-  // Too zoomed out - don't show markers
-  return null;
+  // Viewing is never zoom-restricted (standing decision) — below the
+  // old zoom-11 floor, keep doubling by zoom-band instead of returning
+  // null. This is a minimal extension of the existing bracket table,
+  // not the full pixel/viewport-based rework (tracked separately) —
+  // that formula will replace this whole function later.
+  if (zoom >= 9) return 512
+  if (zoom >= 7) return 1024
+  if (zoom >= 5) return 2048
+  return 4096
 }
 
 /**
@@ -114,12 +121,12 @@ export function getGroupingFactor(zoom: number): number | null {
  * Supertile groups tiles into larger units for better performance
  */
 export function getSupertileId(tileId: string, groupingFactor: number): string {
-  const [latTile, lngTile] = tileId.split(":").map(Number);
+  const [latTile, lngTile] = tileId.split(":").map(Number)
 
-  const superLatTile = Math.floor(latTile / groupingFactor);
-  const superLngTile = Math.floor(lngTile / groupingFactor);
+  const superLatTile = Math.floor(latTile / groupingFactor)
+  const superLngTile = Math.floor(lngTile / groupingFactor)
 
-  return `${superLatTile}:${superLngTile}`;
+  return `${superLatTile}:${superLngTile}`
 }
 
 /**
@@ -127,18 +134,18 @@ export function getSupertileId(tileId: string, groupingFactor: number): string {
  */
 export function getSupertileCenter(
   superTileId: string,
-  groupingFactor: number
+  groupingFactor: number,
 ): { latitude: number; longitude: number } {
-  const [superLatTile, superLngTile] = superTileId.split(":").map(Number);
+  const [superLatTile, superLngTile] = superTileId.split(":").map(Number)
 
   // Center is at the middle of the grouped tiles
-  const centerLatTile = superLatTile * groupingFactor + groupingFactor / 2;
-  const centerLngTile = superLngTile * groupingFactor + groupingFactor / 2;
+  const centerLatTile = superLatTile * groupingFactor + groupingFactor / 2
+  const centerLngTile = superLngTile * groupingFactor + groupingFactor / 2
 
-  const latitude = (centerLatTile * TILE_SIZE_METERS) / 111320;
+  const latitude = (centerLatTile * TILE_SIZE_METERS) / 111320
   const longitude =
     (centerLngTile * TILE_SIZE_METERS) /
-    (111320 * Math.cos((latitude * Math.PI) / 180));
+    (111320 * Math.cos((latitude * Math.PI) / 180))
 
-  return { latitude, longitude };
+  return { latitude, longitude }
 }

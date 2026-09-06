@@ -1,31 +1,20 @@
 /**
- * Post grouping utilities for creating SuperTiles.
+ * Grid/bounds utilities for the supertile system.
  *
- * The supertile is the fundamental unit of caching and display.
- * Posts are grouped into supertiles based on the current zoom level,
- * and the cache stores complete supertiles — not individual posts.
+ * Supertiles are the fixed, world-anchored clustering grid the map view
+ * displays. As of the density/detail fetch split, clustering itself
+ * happens server-side (GROUP BY supertile_id) -- this file's job is:
+ *   1. Determine which supertile grid cells overlap the viewport
+ *   2. Snap fetch bounds outward to the grid so a supertile straddling
+ *      the viewport edge is never partially counted
+ *   3. Cache returned {supertile_id, count} pairs (DensityCache) --
+ *      no post content, since the map view never fetches any
  *
- * Flow:
- *   1. Determine visible supertile grid cells from viewport bounds
- *   2. Check which cells are already cached
- *   3. Fetch only the missing region (snapped to supertile grid boundaries)
- *   4. Group fetched posts into supertiles → store in cache
- *   5. Display from cache — filter to visible grid cells
+ * TileDetailsModal fetches actual post content separately, scoped to
+ * one supertile at a time, only on tap.
  */
 
-import type { PublicPost } from "@loba/shared"
-
 const TILE_SIZE_METERS = 3
-
-export interface SuperTile {
-  supertile_id: string
-  count: number
-  posts: PublicPost[]
-  center: {
-    latitude: number
-    longitude: number
-  }
-}
 
 // ─── Coordinate Conversion ───────────────────────────────────────────
 
@@ -126,150 +115,47 @@ export function snapBoundsToGrid(
   }
 }
 
-// ─── Post → SuperTile Grouping ───────────────────────────────────────
+// ─── Density Cache ────────────────────────────────────────────────────
 
-/**
- * Normalize a post's coordinates (handle PostgreSQL string serialization).
- */
-function normalizePost(
-  post: PublicPost,
-): PublicPost & { latitude: number; longitude: number } {
-  return {
-    ...post,
-    latitude:
-      typeof post.latitude === "string"
-        ? parseFloat(post.latitude)
-        : post.latitude,
-    longitude:
-      typeof post.longitude === "string"
-        ? parseFloat(post.longitude)
-        : post.longitude,
-  }
+export interface DensityEntry {
+  supertile_id: string
+  count: number
 }
 
 /**
- * Group an array of posts into SuperTiles at the given grouping factor.
- * Returns a Map keyed by supertile_id for easy cache insertion.
- */
-export function groupPostsIntoSupertiles(
-  posts: PublicPost[],
-  groupingFactor: number,
-): Map<string, SuperTile> {
-  const validPosts = posts
-    .filter(
-      (p) =>
-        p.latitude != null &&
-        p.longitude != null &&
-        !isNaN(Number(p.latitude)) &&
-        !isNaN(Number(p.longitude)),
-    )
-    .map(normalizePost)
-
-  // Bucket posts by supertile_id
-  const buckets = new Map<string, PublicPost[]>()
-
-  for (const post of validPosts) {
-    const [latTileStr, lngTileStr] = post.tile_id.split(":")
-    const latTile = parseInt(latTileStr)
-    const lngTile = parseInt(lngTileStr)
-
-    const superLatTile = Math.floor(latTile / groupingFactor)
-    const superLngTile = Math.floor(lngTile / groupingFactor)
-    const id = `${superLatTile}:${superLngTile}`
-
-    if (!buckets.has(id)) buckets.set(id, [])
-    buckets.get(id)!.push(post)
-  }
-
-  // Build SuperTile objects
-  const result = new Map<string, SuperTile>()
-
-  buckets.forEach((groupPosts, supertile_id) => {
-    const [superLatTile, superLngTile] = supertile_id.split(":").map(Number)
-
-    const centerLatTile = superLatTile * groupingFactor + groupingFactor / 2
-    const centerLngTile = superLngTile * groupingFactor + groupingFactor / 2
-
-    const avgLat =
-      groupPosts.reduce((sum, p) => sum + (p.latitude as number), 0) /
-      groupPosts.length
-
-    const center = tileToLatLng(centerLatTile, centerLngTile, avgLat)
-
-    result.set(supertile_id, {
-      supertile_id,
-      count: groupPosts.length,
-      posts: groupPosts,
-      center,
-    })
-  })
-
-  return result
-}
-
-// ─── Backward-compatible wrapper ─────────────────────────────────────
-
-/**
- * Original function signature kept for any code that still calls it.
- * Prefer `groupPostsIntoSupertiles()` + `SupertileCache` for new code.
- */
-export function groupPostsByZoomLevel(
-  posts: PublicPost[],
-  groupingFactor: number,
-): SuperTile[] {
-  const map = groupPostsIntoSupertiles(posts, groupingFactor)
-  const result = Array.from(map.values())
-  console.log(
-    `🔍 Grouping: ${posts.length} posts → ${result.length} markers (factor: ${groupingFactor})`,
-  )
-  return result
-}
-
-// ─── Supertile Cache ─────────────────────────────────────────────────
-
-/**
- * A cache that stores complete supertiles, keyed by supertile_id.
+ * A cache for map-view density data — supertile_id -> count only, no
+ * post content. Backs the density/detail fetch split: the map view
+ * only ever needs counts to render markers, never full post arrays.
  *
- * The cache only holds tiles for a single grouping factor at a time.
- * When the zoom band changes (and thus the grouping factor), the cache
- * is cleared because the grid is completely different.
+ * There's no meaningful "append a post" operation — the server
+ * computed the count, so a locally-known new post can only be
+ * optimistically incremented (see incrementCount), not derived.
+ * The next real fetch reconciles it with the server's true count.
  */
-export class SupertileCache {
-  private cache = new Map<string, SuperTile>()
+export class DensityCache {
+  private cache = new Map<string, number>()
   private currentGroupingFactor: number | null = null
 
   /**
-   * Store supertiles. If groupingFactor changed, clears the old cache first.
+   * Store density entries. If groupingFactor changed, clears the old
+   * cache first — a count computed at one grid size is meaningless at
+   * another.
    */
-  addSupertiles(
-    supertiles: Map<string, SuperTile>,
-    groupingFactor: number,
-  ): void {
+  addDensity(entries: DensityEntry[], groupingFactor: number): void {
     if (this.currentGroupingFactor !== groupingFactor) {
-      console.log(
-        `🔄 Grouping factor changed ${this.currentGroupingFactor} → ${groupingFactor}, clearing supertile cache`,
-      )
       this.cache.clear()
       this.currentGroupingFactor = groupingFactor
     }
 
-    for (const [id, tile] of supertiles) {
-      this.cache.set(id, tile)
+    for (const entry of entries) {
+      this.cache.set(entry.supertile_id, entry.count)
     }
-
-    console.log(`💾 Supertile cache: ${this.cache.size} tiles stored`)
   }
 
-  /**
-   * Get a single cached supertile, or undefined if not cached.
-   */
-  get(supertileId: string): SuperTile | undefined {
+  get(supertileId: string): number | undefined {
     return this.cache.get(supertileId)
   }
 
-  /**
-   * Check which of the given supertile IDs are NOT in cache.
-   */
   getMissing(visibleIds: Set<string>, groupingFactor: number): Set<string> {
     if (this.currentGroupingFactor !== groupingFactor) {
       return new Set(visibleIds)
@@ -284,21 +170,33 @@ export class SupertileCache {
   }
 
   /**
-   * Return all cached supertiles whose IDs are in the visible set.
+   * Return cached entries for the visible set, with centers computed
+   * on demand via getSupertileCenter — center isn't stored, since it's
+   * cheap to derive and storing it would just be denormalized state
+   * that could drift from the grid math.
    */
-  getVisible(visibleIds: Set<string>): SuperTile[] {
-    const result: SuperTile[] = []
+  getVisible(
+    visibleIds: Set<string>,
+    getCenterFn: (id: string) => { latitude: number; longitude: number },
+  ): {
+    supertile_id: string
+    count: number
+    center: { latitude: number; longitude: number }
+  }[] {
+    const result: {
+      supertile_id: string
+      count: number
+      center: { latitude: number; longitude: number }
+    }[] = []
     for (const id of visibleIds) {
-      const tile = this.cache.get(id)
-      if (tile) result.push(tile)
+      const count = this.cache.get(id)
+      if (count !== undefined) {
+        result.push({ supertile_id: id, count, center: getCenterFn(id) })
+      }
     }
     return result
   }
 
-  /**
-   * Evict supertiles not in the keep set. Call with an expanded set of IDs
-   * (e.g., 2× viewport) to maintain a buffer zone around the viewport.
-   */
   evictOutside(keepIds: Set<string>): number {
     let evicted = 0
     for (const id of this.cache.keys()) {
@@ -307,43 +205,23 @@ export class SupertileCache {
         evicted++
       }
     }
-    if (evicted > 0) {
-      console.log(`🗑️ Evicted ${evicted} supertiles, ${this.cache.size} remain`)
-    }
     return evicted
   }
 
-  /** Add a single post (e.g., user just created one). */
-  addPost(post: PublicPost, groupingFactor: number): void {
+  /**
+   * Optimistically bump a supertile's count by 1 (e.g. user just
+   * created a post there). Not authoritative — the next real fetch
+   * reconciles with the server's true count.
+   */
+  incrementCount(supertileId: string, groupingFactor: number): void {
     if (this.currentGroupingFactor !== groupingFactor) return
+    const existing = this.cache.get(supertileId)
+    this.cache.set(supertileId, (existing ?? 0) + 1)
+  }
 
-    const normalized = normalizePost(post)
-    const [latTileStr, lngTileStr] = normalized.tile_id.split(":")
-    const latTile = parseInt(latTileStr)
-    const lngTile = parseInt(lngTileStr)
-    const superLatTile = Math.floor(latTile / groupingFactor)
-    const superLngTile = Math.floor(lngTile / groupingFactor)
-    const id = `${superLatTile}:${superLngTile}`
-
-    const existing = this.cache.get(id)
-    if (existing) {
-      existing.posts.push(normalized)
-      existing.count = existing.posts.length
-    } else {
-      const centerLatTile = superLatTile * groupingFactor + groupingFactor / 2
-      const centerLngTile = superLngTile * groupingFactor + groupingFactor / 2
-      const center = tileToLatLng(
-        centerLatTile,
-        centerLngTile,
-        normalized.latitude,
-      )
-      this.cache.set(id, {
-        supertile_id: id,
-        count: 1,
-        posts: [normalized],
-        center,
-      })
-    }
+  /** Invalidate a single entry, forcing a re-fetch on next request. */
+  invalidate(supertileId: string): void {
+    this.cache.delete(supertileId)
   }
 
   clear(): void {
