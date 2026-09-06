@@ -306,7 +306,14 @@ export function TileDetailsModal({
     } finally {
       setIsSubmitting(false)
     }
-  }, [selectedPost, newComment, authToken, authHeaders])
+  }, [
+    selectedPost,
+    newComment,
+    authToken,
+    authHeaders,
+    userLocation?.latitude,
+    userLocation?.longitude,
+  ])
 
   // ─── Reaction handler ───────────────────────────────────────────────
 
