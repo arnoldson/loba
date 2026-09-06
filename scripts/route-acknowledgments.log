@@ -3,3 +3,6 @@
 2026-08-22T03:04:07.017Z  ACKNOWLEDGED ungated production route: HEAD /api/auth/ping
 2026-08-22T03:04:20.441Z  ACKNOWLEDGED ungated production route: POST /api/auth/login
 2026-08-22T03:04:26.586Z  ACKNOWLEDGED ungated production route: POST /api/posts/:id/report
+2026-09-06T01:01:42.907Z  ACKNOWLEDGED ungated production route: GET /api/posts/by-supertile/:supertileId
+2026-09-06T01:01:49.166Z  ACKNOWLEDGED ungated production route: HEAD /api/posts/by-supertile/:supertileId
+2026-09-06T01:02:06.233Z  ACKNOWLEDGED ungated production route: POST /api/posts/density-in-bounds

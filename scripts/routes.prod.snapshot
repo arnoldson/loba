@@ -5,6 +5,7 @@
   "GET /api/auth/ping",
   "GET /api/posts/:id",
   "GET /api/posts/:postId/comments",
+  "GET /api/posts/by-supertile/:supertileId",
   "GET /api/posts/in-bounds/test",
   "GET /api/posts/mine",
   "GET /api/tags/popular",
@@ -12,6 +13,7 @@
   "HEAD /api/auth/ping",
   "HEAD /api/posts/:id",
   "HEAD /api/posts/:postId/comments",
+  "HEAD /api/posts/by-supertile/:supertileId",
   "HEAD /api/posts/in-bounds/test",
   "HEAD /api/posts/mine",
   "HEAD /api/tags/popular",
@@ -23,5 +25,6 @@
   "POST /api/posts/:id/report",
   "POST /api/posts/:postId/comments",
   "POST /api/posts/by-tiles",
+  "POST /api/posts/density-in-bounds",
   "POST /api/posts/in-bounds"
 ]

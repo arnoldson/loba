@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react"
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react"
 import {
   View,
   Text,
@@ -12,7 +12,6 @@ import {
   Alert,
   Platform,
 } from "react-native"
-import type { SuperTile } from "@/utils/postGrouping"
 import type { PublicPost, PublicComment, ReportReason } from "@loba/shared"
 import {
   API_URL,
@@ -23,11 +22,27 @@ import {
 
 // ─── Configuration ──────────────────────────────────────────────────
 
+const PAGE_SIZE = 25
+
 // ─── Props ──────────────────────────────────────────────────────────
+
+/**
+ * What the modal receives on tap — just enough to identify and fetch a
+ * supertile's posts. Deliberately lightweight: since the map view now
+ * only fetches aggregate counts (see /api/posts/density-in-bounds),
+ * there's no pre-fetched posts[] to hand off anymore. The modal owns
+ * its own paginated fetch instead.
+ */
+export interface SelectedTile {
+  supertile_id: string
+  groupingFactor: number
+  count: number
+  center: { latitude: number; longitude: number }
+}
 
 interface TileDetailsModalProps {
   visible: boolean
-  tile: SuperTile | null
+  tile: SelectedTile | null
   onClose: () => void
   authToken?: string | null
   onPostDeleted?: (postId: string) => void
@@ -43,6 +58,21 @@ export function TileDetailsModal({
   userLocation,
 }: TileDetailsModalProps) {
   // ─── State ──────────────────────────────────────────────────────────
+
+  // Posts loaded for the current tile — accumulates across "load more"
+  // pages. Reset whenever `tile` changes (a different supertile was
+  // tapped) or the modal closes.
+  const [posts, setPosts] = useState<PublicPost[]>([])
+  const [isLoadingPosts, setIsLoadingPosts] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [postsError, setPostsError] = useState<string | null>(null)
+  const nextCursorRef = useRef<string | null>(null)
+
+  // Tracks which supertile_id the current `posts` state belongs to, so
+  // a fetch response arriving after the user has already tapped a
+  // different marker doesn't overwrite the wrong tile's list (a real
+  // risk given fetches are async and taps can happen in quick succession).
+  const loadedForRef = useRef<string | null>(null)
 
   const [selectedPost, setSelectedPost] = useState<PublicPost | null>(null)
   const [comments, setComments] = useState<PublicComment[]>([])
@@ -103,6 +133,79 @@ export function TileDetailsModal({
     [localReactions],
   )
 
+  // ─── Post fetching (paginated, per-supertile) ────────────────────────
+
+  const fetchTilePosts = useCallback(
+    async (targetTile: SelectedTile, cursor?: string) => {
+      const isFirstPage = !cursor
+      if (isFirstPage) {
+        setIsLoadingPosts(true)
+      } else {
+        setIsLoadingMore(true)
+      }
+      setPostsError(null)
+
+      try {
+        const params = new URLSearchParams({
+          groupingFactor: String(targetTile.groupingFactor),
+          limit: String(PAGE_SIZE),
+        })
+        if (cursor) params.set("after", cursor)
+
+        const res = await fetch(
+          `${API_URL}/api/posts/by-supertile/${encodeURIComponent(
+            targetTile.supertile_id,
+          )}?${params}`,
+          { headers: authHeaders },
+        )
+        const data = await res.json()
+
+        // If the user tapped a different marker while this request was
+        // in flight, drop the result — it belongs to a tile we're no
+        // longer showing.
+        if (loadedForRef.current !== targetTile.supertile_id) return
+
+        if (data.success) {
+          setPosts((prev) =>
+            isFirstPage ? data.posts : [...prev, ...data.posts],
+          )
+          nextCursorRef.current = data.nextCursor
+        } else if (!isBannedError(data)) {
+          setPostsError(data.error || "Failed to load posts")
+        }
+      } catch {
+        if (loadedForRef.current === targetTile.supertile_id) {
+          setPostsError("Could not connect to server")
+        }
+      } finally {
+        if (loadedForRef.current === targetTile.supertile_id) {
+          setIsLoadingPosts(false)
+          setIsLoadingMore(false)
+        }
+      }
+    },
+    [authHeaders],
+  )
+
+  const handleLoadMore = useCallback(() => {
+    if (!tile || isLoadingMore || !nextCursorRef.current) return
+    fetchTilePosts(tile, nextCursorRef.current)
+  }, [tile, isLoadingMore, fetchTilePosts])
+
+  // Fetch the first page whenever a new supertile is selected. Keyed on
+  // supertile_id (not the whole tile object) so re-renders that produce
+  // a new-but-equivalent tile reference don't trigger a redundant fetch.
+  useEffect(() => {
+    if (!visible || !tile) return
+    if (loadedForRef.current === tile.supertile_id) return
+
+    loadedForRef.current = tile.supertile_id
+    setPosts([])
+    nextCursorRef.current = null
+    fetchTilePosts(tile)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, tile?.supertile_id])
+
   // ─── Handlers ───────────────────────────────────────────────────────
 
   const fetchComments = useCallback(
@@ -158,6 +261,11 @@ export function TileDetailsModal({
     setInfoMessage(null)
     setDeletedPostIds(new Set())
     setLocalReactions(new Map())
+    // Reset so reopening the same supertile re-fetches fresh data rather
+    // than reusing posts that may have expired/changed while closed.
+    loadedForRef.current = null
+    setPosts([])
+    nextCursorRef.current = null
     onClose()
   }, [onClose])
 
@@ -433,10 +541,25 @@ export function TileDetailsModal({
   const isPostView = selectedPost !== null
 
   // Filter out locally deleted posts
-  const visiblePosts = tile.posts.filter((p) => !deletedPostIds.has(p.id))
+  const visiblePosts = posts.filter((p) => !deletedPostIds.has(p.id))
 
-  // If all posts were deleted, close the modal
-  if (visiblePosts.length === 0 && deletedPostIds.size > 0) {
+  // True on the very first render after a new tile is selected, before
+  // the fetch-triggering effect has had a chance to run and reset
+  // `posts`/set isLoadingPosts. Without this, that first render could
+  // briefly show the *previous* tile's already-loaded posts instead of
+  // a loading state — effects run after commit, not during it.
+  const isSwitchingTiles = loadedForRef.current !== tile.supertile_id
+  const showLoading = isLoadingPosts || isSwitchingTiles
+
+  // If all loaded posts were deleted and there's nothing left to page
+  // in, close the modal. If more pages remain, leave it open — the
+  // supertile isn't actually empty, just the currently-loaded page is.
+  if (
+    visiblePosts.length === 0 &&
+    deletedPostIds.size > 0 &&
+    !nextCursorRef.current &&
+    !showLoading
+  ) {
     setTimeout(handleClose, 0)
     return null
   }
@@ -472,7 +595,7 @@ export function TileDetailsModal({
             <Text style={styles.title} numberOfLines={1}>
               {isPostView
                 ? `${getPostWithReaction(selectedPost).display_name}'s post`
-                : `${visiblePosts.length} ${visiblePosts.length === 1 ? "post" : "posts"} in this area`}
+                : `${tile.count} ${tile.count === 1 ? "post" : "posts"} in this area`}
             </Text>
 
             <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
@@ -496,6 +619,21 @@ export function TileDetailsModal({
               isDeleting={isDeleting}
               canReact={canReact}
             />
+          ) : showLoading ? (
+            <View style={styles.centeredLoading}>
+              <ActivityIndicator size="small" color="#007AFF" />
+              <Text style={styles.centeredLoadingText}>Loading posts...</Text>
+            </View>
+          ) : postsError ? (
+            <View style={styles.centeredLoading}>
+              <Text style={styles.errorText}>{postsError}</Text>
+              <TouchableOpacity
+                onPress={() => tile && fetchTilePosts(tile)}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <PostListView
               posts={visiblePosts.map(getPostWithReaction)}
@@ -504,6 +642,9 @@ export function TileDetailsModal({
               onReaction={handleReaction}
               isDeleting={isDeleting}
               canReact={canReact}
+              hasMore={!!nextCursorRef.current}
+              isLoadingMore={isLoadingMore}
+              onLoadMore={handleLoadMore}
             />
           )}
 
@@ -795,6 +936,9 @@ function PostListView({
   onReaction,
   isDeleting,
   canReact,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
 }: {
   posts: PublicPost[]
   onSelectPost: (post: PublicPost) => void
@@ -802,9 +946,22 @@ function PostListView({
   onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void
   isDeleting: boolean
   canReact: boolean
+  hasMore?: boolean
+  isLoadingMore?: boolean
+  onLoadMore?: () => void
 }) {
   return (
-    <ScrollView style={styles.postsList}>
+    <ScrollView
+      style={styles.postsList}
+      onScroll={({ nativeEvent }) => {
+        if (!hasMore || isLoadingMore || !onLoadMore) return
+        const { layoutMeasurement, contentOffset, contentSize } = nativeEvent
+        const nearBottom =
+          layoutMeasurement.height + contentOffset.y >= contentSize.height - 200
+        if (nearBottom) onLoadMore()
+      }}
+      scrollEventThrottle={200}
+    >
       {posts.map((post, index) => (
         <TouchableOpacity
           key={post.id}
@@ -864,6 +1021,20 @@ function PostListView({
           {index < posts.length - 1 && <View style={styles.divider} />}
         </TouchableOpacity>
       ))}
+
+      {hasMore && (
+        <TouchableOpacity
+          style={styles.loadMoreButton}
+          onPress={onLoadMore}
+          disabled={isLoadingMore}
+        >
+          {isLoadingMore ? (
+            <ActivityIndicator size="small" color="#007AFF" />
+          ) : (
+            <Text style={styles.loadMoreText}>Load more</Text>
+          )}
+        </TouchableOpacity>
+      )}
     </ScrollView>
   )
 }
@@ -1263,6 +1434,38 @@ const styles = StyleSheet.create({
     color: "#d32f2f",
     textAlign: "center",
     paddingVertical: 8,
+  },
+  centeredLoading: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  centeredLoadingText: {
+    color: "#007AFF",
+    fontSize: 14,
+    fontWeight: "500",
+    marginTop: 8,
+  },
+  retryButton: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: "#007AFF",
+    borderRadius: 16,
+  },
+  retryButtonText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  loadMoreButton: {
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  loadMoreText: {
+    color: "#007AFF",
+    fontSize: 14,
+    fontWeight: "600",
   },
   infoText: {
     fontSize: 14,

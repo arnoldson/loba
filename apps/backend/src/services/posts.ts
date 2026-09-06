@@ -358,6 +358,120 @@ export class PostService {
     }))
   }
 
+  // ─── Density query ──────────────────────────────────────────────────
+
+  /**
+   * Get post counts grouped by supertile within a bounding box.
+   * Bounds are expected to be pre-snapped to the supertile grid on the
+   * client (see snapBoundsToGrid in postGrouping.ts) so bbox filtering
+   * and grid-cell membership agree exactly.
+   *
+   * Applies the same archived_at/expires_at filters as getPostsInBounds
+   * so a marker's count never includes posts TileDetailsModal wouldn't
+   * show — otherwise count and tap-in content silently disagree.
+   */
+  async getPostDensity(
+    bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+    groupingFactor: number,
+    tags?: string[],
+  ): Promise<{ supertile_id: string; count: number }[]> {
+    const tagFilter =
+      tags && tags.length > 0
+        ? sql`AND tags && ARRAY[${sql.join(normalizeTags(tags).map((t) => sql`${t}`))}]::text[]`
+        : sql``
+
+    const result = await sql<{ supertile_id: string; count: string }>`
+      WITH supertiles AS (
+        SELECT
+          floor(
+            floor(latitude * 111320 / 3) / ${groupingFactor}
+          ) AS super_lat_tile,
+          floor(
+            floor(longitude * 111320 * cos(radians(latitude)) / 3) / ${groupingFactor}
+          ) AS super_lng_tile
+        FROM posts
+        WHERE location && ST_MakeEnvelope(${bounds.minLng}, ${bounds.minLat}, ${bounds.maxLng}, ${bounds.maxLat}, 4326)
+          AND archived_at IS NULL
+          AND expires_at > NOW()
+          ${tagFilter}
+      )
+      SELECT
+        super_lat_tile || ':' || super_lng_tile AS supertile_id,
+        COUNT(*) AS count
+      FROM supertiles
+      GROUP BY super_lat_tile, super_lng_tile
+    `.execute(db)
+
+    return result.rows.map((row) => ({
+      supertile_id: row.supertile_id,
+      count: Number(row.count),
+    }))
+  }
+
+  // ─── Paginated per-supertile detail query ────────────────────────────
+
+  /**
+   * Get posts belonging to a single supertile, cursor-paginated.
+   * Backs TileDetailsModal — the only place full post content is
+   * fetched, scoped to exactly the tapped supertile.
+   *
+   * Cursor (not offset) because posts churn via TTL expiry: a user
+   * scrolling while posts expire underneath them shouldn't see
+   * duplicates or skips.
+   */
+  async getPostsInSupertile(
+    supertileId: string,
+    groupingFactor: number,
+    requestingUserId?: string,
+    cursor?: { createdAt: string; id: string },
+    limit: number = 25,
+  ): Promise<{
+    posts: PublicPost[]
+    nextCursor: { createdAt: string; id: string } | null
+  }> {
+    const [superLatTile, superLngTile] = supertileId.split(":").map(Number)
+    const now = new Date().toISOString()
+
+    let query = db
+      .selectFrom("posts")
+      .selectAll()
+      .where(
+        sql<boolean>`floor(floor(latitude * 111320 / 3) / ${groupingFactor}) = ${superLatTile}`,
+      )
+      .where(
+        sql<boolean>`floor(floor(longitude * 111320 * cos(radians(latitude)) / 3) / ${groupingFactor}) = ${superLngTile}`,
+      )
+      .where("archived_at", "is", null)
+      .where("expires_at", ">", now)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+
+    if (cursor) {
+      query = query.where(
+        sql<boolean>`(created_at, id) < (${cursor.createdAt}, ${cursor.id})`,
+      )
+    }
+
+    const posts = await query.limit(limit + 1).execute()
+
+    const hasMore = posts.length > limit
+    const pagePosts = hasMore ? posts.slice(0, limit) : posts
+
+    const nextCursor = hasMore
+      ? {
+          createdAt: pagePosts[pagePosts.length - 1].created_at,
+          id: pagePosts[pagePosts.length - 1].id,
+        }
+      : null
+
+    const publicPosts = await this.toPublicPosts(
+      pagePosts as unknown as Post[],
+      requestingUserId,
+    )
+
+    return { posts: publicPosts, nextCursor }
+  }
+
   // ─── Post transformation ───────────────────────────────────────────
 
   private async toPublicPosts(
