@@ -8,6 +8,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from "react-native"
 import MapView, { Marker, Region } from "react-native-maps"
 import { TileMarker } from "@/components/TileMarker"
@@ -76,6 +77,12 @@ export default function HomeScreen() {
   const [location, setLocation] = useState<Location.LocationObject | null>(null)
   const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA))
   const [isLoadingPosts, setIsLoadingPosts] = useState(false)
+
+  // The map fills its container edge-to-edge (absoluteFillObject on a
+  // plain flex:1 root, no padding), so window width is an accurate,
+  // always-in-sync proxy for the actual rendered map width — feeds the
+  // viewport-relative clustering formula in getGroupingFactor.
+  const { width: viewportWidthPx } = useWindowDimensions()
 
   // Tag filter state
   const [selectedTags, setSelectedTags] = useState<string[]>([])
@@ -185,10 +192,13 @@ export default function HomeScreen() {
           return
         }
 
-        const currentZoom = getZoomLevel(region.latitudeDelta)
         // Viewing is never zoom-restricted (standing decision) — grouping
         // always returns a factor now, no null/too-zoomed-out case.
-        const grouping = getGroupingFactor(currentZoom)
+        const grouping = getGroupingFactor(
+          region.longitudeDelta,
+          region.latitude,
+          viewportWidthPx,
+        )
         const getCenter = makeGetCenter(grouping)
 
         // When tags are active, skip the cache optimization and always fetch
@@ -321,7 +331,11 @@ export default function HomeScreen() {
           console.error("❌ Error fetching post density:", error)
         }
 
-        const grouping = getGroupingFactor(getZoomLevel(region.latitudeDelta))
+        const grouping = getGroupingFactor(
+          region.longitudeDelta,
+          region.latitude,
+          viewportWidthPx,
+        )
         const getCenter = makeGetCenter(grouping)
         const viewportBounds = getBoundingBox(region)
         const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
@@ -331,7 +345,7 @@ export default function HomeScreen() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [densityCache],
+    [densityCache, viewportWidthPx],
   )
 
   // Re-fetch when tags change.
@@ -441,8 +455,18 @@ export default function HomeScreen() {
   // Called by CreatePostModal after a successful post
   const handlePostCreated = useCallback(
     (post: { tile_id: string }) => {
-      const grouping = getGroupingFactor(zoom)
       if (location) {
+        const region: Region = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+          latitudeDelta: INITIAL_LAT_DELTA,
+          longitudeDelta: INITIAL_LAT_DELTA,
+        }
+        const grouping = getGroupingFactor(
+          region.longitudeDelta,
+          location.coords.latitude,
+          viewportWidthPx,
+        )
         // Optimistic +1 on the supertile this post landed in — not
         // authoritative, the next real fetch reconciles with the
         // server's true count. We don't have raw post content to cache
@@ -450,12 +474,6 @@ export default function HomeScreen() {
         const supertileId = getSupertileId(post.tile_id, grouping)
         densityCache.incrementCount(supertileId, grouping)
 
-        const region: Region = {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          latitudeDelta: INITIAL_LAT_DELTA,
-          longitudeDelta: INITIAL_LAT_DELTA,
-        }
         const viewportBounds = getBoundingBox(region)
         const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
         setVisibleSupertiles(
@@ -478,7 +496,7 @@ export default function HomeScreen() {
       }
       fetchPopularTags(tagsRegion)
     },
-    [zoom, location, densityCache, fetchPopularTags],
+    [location, densityCache, fetchPopularTags, viewportWidthPx],
   )
 
   // Called by TileDetailsModal after a post is deleted. Invalidates just
@@ -513,7 +531,18 @@ export default function HomeScreen() {
   }, [])
 
   // Apply marker limit to prevent native crashes
-  const groupingFactor = getGroupingFactor(zoom)
+  //
+  // Uses lastRegion's latitude/longitudeDelta (not `location`/`zoom`) so
+  // this matches whatever actually drove the density data currently in
+  // visibleSupertiles — fetchVisiblePosts computes groupingFactor from
+  // region.latitude/longitudeDelta too. Falling back to location, then
+  // INITIAL_LAT_DELTA, only matters before the very first fetch has set
+  // lastRegion.
+  const groupingFactor = getGroupingFactor(
+    lastRegion.current?.longitudeDelta ?? INITIAL_LAT_DELTA,
+    lastRegion.current?.latitude ?? location?.coords.latitude ?? 37.78825,
+    viewportWidthPx,
+  )
   const supertiles = useMemo(() => {
     const MAX_MARKERS = 150
     if (visibleSupertiles.length > MAX_MARKERS) {
