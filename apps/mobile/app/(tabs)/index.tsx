@@ -34,7 +34,7 @@ import {
 import { getBoundingBox, getVisibleAreaMeters } from "@/utils/mapBounds"
 import { perfMonitor } from "@/utils/diagnostics"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
-import { DevCrashButton } from "@/components/DevCrashButton"
+import { DevTestMenu } from "@/components/DevTestMenu"
 import { API_URL } from "@/utils/api"
 
 // Backend API URL
@@ -452,6 +452,34 @@ export default function HomeScreen() {
     }
   }
 
+  // Dev-only: lets the dev test menu override the app's notion of
+  // "current location" to match a hopped-to city, so post creation, the
+  // "you are here" marker, and the recenter button all follow the hop
+  // too -- not just the map camera. Does NOT touch real device GPS --
+  // expo-location's actual reading is controlled by the simulator, not
+  // in-app JS. This only overwrites the React state the rest of this
+  // screen reads, which is safe because nothing else here re-syncs
+  // `location` from GPS after the initial mount fetch (see the effect
+  // above, guarded by hasInitialFetched -- no watchPositionAsync either).
+  const overrideLocationForTesting = useCallback(
+    (coords: { latitude: number; longitude: number }) => {
+      setLocation({
+        coords: {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          altitude: null,
+          accuracy: null,
+          altitudeAccuracy: null,
+          heading: null,
+          speed: null,
+        },
+        timestamp: Date.now(),
+        mocked: true,
+      })
+    },
+    [],
+  )
+
   // Called by CreatePostModal after a successful post
   const handlePostCreated = useCallback(
     (post: { tile_id: string }) => {
@@ -627,8 +655,16 @@ export default function HomeScreen() {
             </Marker>
           )}
         </MapView>
-        {__DEV__ && <DevCrashButton />}
       </ErrorBoundary>
+
+      {__DEV__ && (
+        <ErrorBoundary label="Dev test menu">
+          <DevTestMenu
+            mapRef={mapRef}
+            overrideLocation={overrideLocationForTesting}
+          />
+        </ErrorBoundary>
+      )}
 
       {/* Tag filter bar */}
       <TagFilterBar
