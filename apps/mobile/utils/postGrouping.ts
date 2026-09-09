@@ -35,6 +35,13 @@ export function tileToLatLng(
 
 /**
  * Convert lat/lng → base tile coordinates (the inverse of tileToLatLng).
+ *
+ * Uses the point's own latitude for the longitude term's cos()
+ * correction -- correct for assigning a single point to its tile
+ * (matches how the backend assigns each post to a tile from its own
+ * coordinates), but NOT safe for converting both corners of a bounding
+ * box to compute a min/max tile range. See latLngToTileForRange below
+ * for that case.
  */
 export function latLngToTile(
   latitude: number,
@@ -43,6 +50,38 @@ export function latLngToTile(
   const latTile = Math.floor((latitude * 111320) / TILE_SIZE_METERS)
   const lngTile = Math.floor(
     (longitude * 111320 * Math.cos((latitude * Math.PI) / 180)) /
+      TILE_SIZE_METERS,
+  )
+  return { latTile, lngTile }
+}
+
+/**
+ * Same conversion as latLngToTile, but the longitude term's cos()
+ * correction uses a shared reference latitude instead of each point's
+ * own latitude.
+ *
+ * Required whenever converting BOTH corners of a bounding box to tile
+ * coordinates to compute a min/max range (getVisibleSupertileIds,
+ * snapBoundsToGrid below): using each corner's own latitude can make
+ * the numerically "min" longitude corner convert to a LARGER tile index
+ * than the "max" corner. cos(lat) falls off with latitude -- at high
+ * latitude with a tight viewport, the change in cos(lat) between the
+ * two corners can outweigh the change in longitude itself, inverting a
+ * min<=max range into an empty one (zero visible tiles) even though
+ * real data exists in the box. Reproduced testing at Seoul's latitude
+ * (37.57°) at the app's default zoom -- see issue #54.
+ *
+ * latTile has no such term and needs no reference latitude -- it's
+ * monotonic in latitude on its own.
+ */
+function latLngToTileForRange(
+  latitude: number,
+  longitude: number,
+  refLatitude: number,
+): { latTile: number; lngTile: number } {
+  const latTile = Math.floor((latitude * 111320) / TILE_SIZE_METERS)
+  const lngTile = Math.floor(
+    (longitude * 111320 * Math.cos((refLatitude * Math.PI) / 180)) /
       TILE_SIZE_METERS,
   )
   return { latTile, lngTile }
@@ -65,8 +104,9 @@ export function getVisibleSupertileIds(
   bounds: Bounds,
   groupingFactor: number,
 ): Set<string> {
-  const minTile = latLngToTile(bounds.minLat, bounds.minLng)
-  const maxTile = latLngToTile(bounds.maxLat, bounds.maxLng)
+  const refLat = (bounds.minLat + bounds.maxLat) / 2
+  const minTile = latLngToTileForRange(bounds.minLat, bounds.minLng, refLat)
+  const maxTile = latLngToTileForRange(bounds.maxLat, bounds.maxLng, refLat)
 
   const minSuperLat = Math.floor(minTile.latTile / groupingFactor)
   const maxSuperLat = Math.floor(maxTile.latTile / groupingFactor)
@@ -92,8 +132,8 @@ export function snapBoundsToGrid(
 ): Bounds {
   const refLat = (bounds.minLat + bounds.maxLat) / 2
 
-  const minTile = latLngToTile(bounds.minLat, bounds.minLng)
-  const maxTile = latLngToTile(bounds.maxLat, bounds.maxLng)
+  const minTile = latLngToTileForRange(bounds.minLat, bounds.minLng, refLat)
+  const maxTile = latLngToTileForRange(bounds.maxLat, bounds.maxLng, refLat)
 
   const snappedMinLatTile =
     Math.floor(minTile.latTile / groupingFactor) * groupingFactor
