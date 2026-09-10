@@ -20,11 +20,11 @@ interface PostsInBoundsRequest {
 }
 
 interface PostsDensityRequest {
-  minLat: number
-  maxLat: number
-  minLng: number
-  maxLng: number
-  groupingFactor: number
+  latitude: number
+  longitude: number
+  latitudeDelta: number
+  longitudeDelta: number
+  viewportWidthPx: number
   tags?: string[]
 }
 
@@ -96,18 +96,30 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * POST /api/posts/density-in-bounds
-   * Get post counts grouped by supertile within a geographic bounding box.
-   * Returns aggregate counts only — no post content — for cheap map-view
-   * rendering. Client is expected to pre-snap bounds to the supertile grid
-   * (see snapBoundsToGrid in postGrouping.ts) so bbox filtering and
-   * grid-cell membership agree exactly; no partial-cell edge cases here.
+   * Get post counts as a sparse world-anchored M x N supertile grid
+   * covering the client's viewport. Client sends raw viewport
+   * parameters only (latitude, longitude, deltas, viewport width) --
+   * the server determines grid size/position/groupingFactor entirely;
+   * see computeGridRect in utils/grouping.ts. Returns the grid's
+   * metadata (groupingFactor, gridOrigin, gridWidth/Height, exact
+   * bounds) plus only non-empty cells as {row, col, count} -- no post
+   * content, for cheap map-view rendering. The client interpolates each
+   * cell's center directly within `bounds` using (row, col,
+   * gridWidth, gridHeight) -- plain proportional math, no geographic
+   * computation of its own.
    */
   fastify.post(
     "/api/posts/density-in-bounds",
     { preHandler: [optionalAuth] },
     async (request, reply) => {
-      const { minLat, maxLat, minLng, maxLng, groupingFactor, tags } =
-        request.body as PostsDensityRequest
+      const {
+        latitude,
+        longitude,
+        latitudeDelta,
+        longitudeDelta,
+        viewportWidthPx,
+        tags,
+      } = request.body as PostsDensityRequest
 
       const cleanTags =
         tags && Array.isArray(tags) && tags.length > 0
@@ -115,46 +127,44 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
           : undefined
 
       if (
-        minLat == null ||
-        maxLat == null ||
-        minLng == null ||
-        maxLng == null ||
-        groupingFactor == null
+        latitude == null ||
+        longitude == null ||
+        latitudeDelta == null ||
+        longitudeDelta == null ||
+        viewportWidthPx == null
       ) {
         return reply.status(400).send({
           success: false,
           error:
-            "Missing required fields: minLat, maxLat, minLng, maxLng, groupingFactor",
-        })
-      }
-
-      // groupingFactor must be a positive power of 2, matching the
-      // SuperTile grid (see getGroupingFactor in utils/tiles.ts). A
-      // client-supplied non-power-of-2 value would silently produce a
-      // grid the frontend's own grouping math never generates.
-      const isPositivePowerOfTwo =
-        Number.isInteger(groupingFactor) &&
-        groupingFactor > 0 &&
-        (groupingFactor & (groupingFactor - 1)) === 0
-
-      if (!isPositivePowerOfTwo) {
-        return reply.status(400).send({
-          success: false,
-          error: "groupingFactor must be a positive power of 2",
+            "Missing required fields: latitude, longitude, latitudeDelta, longitudeDelta, viewportWidthPx",
         })
       }
 
       try {
-        const density = await postService.getPostDensity(
-          { minLat, maxLat, minLng, maxLng },
+        const {
           groupingFactor,
+          gridOrigin,
+          gridWidth,
+          gridHeight,
+          bounds,
+          cells,
+        } = await postService.getPostDensity(
+          latitude,
+          longitude,
+          latitudeDelta,
+          longitudeDelta,
+          viewportWidthPx,
           cleanTags,
         )
 
         return {
           success: true,
-          density,
           groupingFactor,
+          gridOrigin,
+          gridWidth,
+          gridHeight,
+          bounds,
+          cells,
           filtered_by_tags: cleanTags || null,
         }
       } catch (error) {

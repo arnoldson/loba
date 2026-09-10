@@ -1,93 +1,17 @@
 /**
- * Grid/bounds utilities for the supertile system.
+ * Client-side density cache and cell-center interpolation.
  *
- * Supertiles are the fixed, world-anchored clustering grid the map view
- * displays. As of the density/detail fetch split, clustering itself
- * happens server-side (GROUP BY supertile_id) -- this file's job is:
- *   1. Determine which supertile grid cells overlap the viewport
- *   2. Snap fetch bounds outward to the grid so a supertile straddling
- *      the viewport edge is never partially counted
- *   3. Cache returned {supertile_id, count} pairs (DensityCache) --
- *      no post content, since the map view never fetches any
+ * All grid/bounds computation (grouping factor, which cells overlap a
+ * viewport, supertile boundaries) now lives entirely server-side -- see
+ * apps/backend/src/utils/grouping.ts and issue #58's follow-up. This
+ * file's job is much smaller than it used to be:
+ *   1. Interpolate a cell's center within the grid rectangle the server
+ *      returned -- plain proportional math, no geographic computation.
+ *   2. Cache {supertile_id, count, center} entries between fetches.
  *
  * TileDetailsModal fetches actual post content separately, scoped to
- * one supertile at a time, only on tap.
+ * one supertile at a time, only on tap -- unaffected by any of this.
  */
-
-const TILE_SIZE_METERS = 3
-
-// ─── Coordinate Conversion ───────────────────────────────────────────
-
-/**
- * Convert tile coordinates → lat/lng.
- * `refLat` is a reference latitude for the longitude cosine correction.
- */
-export function tileToLatLng(
-  latTile: number,
-  lngTile: number,
-  refLat: number,
-): { latitude: number; longitude: number } {
-  const latitude = (latTile * TILE_SIZE_METERS) / 111320
-  const longitude =
-    (lngTile * TILE_SIZE_METERS) / (111320 * Math.cos((refLat * Math.PI) / 180))
-  return { latitude, longitude }
-}
-
-/**
- * Convert lat/lng → base tile coordinates (the inverse of tileToLatLng).
- *
- * Uses the point's own latitude for the longitude term's cos()
- * correction -- correct for assigning a single point to its tile
- * (matches how the backend assigns each post to a tile from its own
- * coordinates), but NOT safe for converting both corners of a bounding
- * box to compute a min/max tile range. See latLngToTileForRange below
- * for that case.
- */
-export function latLngToTile(
-  latitude: number,
-  longitude: number,
-): { latTile: number; lngTile: number } {
-  const latTile = Math.floor((latitude * 111320) / TILE_SIZE_METERS)
-  const lngTile = Math.floor(
-    (longitude * 111320 * Math.cos((latitude * Math.PI) / 180)) /
-      TILE_SIZE_METERS,
-  )
-  return { latTile, lngTile }
-}
-
-/**
- * Same conversion as latLngToTile, but the longitude term's cos()
- * correction uses a shared reference latitude instead of each point's
- * own latitude.
- *
- * Required whenever converting BOTH corners of a bounding box to tile
- * coordinates to compute a min/max range (getVisibleSupertileIds,
- * snapBoundsToGrid below): using each corner's own latitude can make
- * the numerically "min" longitude corner convert to a LARGER tile index
- * than the "max" corner. cos(lat) falls off with latitude -- at high
- * latitude with a tight viewport, the change in cos(lat) between the
- * two corners can outweigh the change in longitude itself, inverting a
- * min<=max range into an empty one (zero visible tiles) even though
- * real data exists in the box. Reproduced testing at Seoul's latitude
- * (37.57°) at the app's default zoom -- see issue #54.
- *
- * latTile has no such term and needs no reference latitude -- it's
- * monotonic in latitude on its own.
- */
-function latLngToTileForRange(
-  latitude: number,
-  longitude: number,
-  refLatitude: number,
-): { latTile: number; lngTile: number } {
-  const latTile = Math.floor((latitude * 111320) / TILE_SIZE_METERS)
-  const lngTile = Math.floor(
-    (longitude * 111320 * Math.cos((refLatitude * Math.PI) / 180)) /
-      TILE_SIZE_METERS,
-  )
-  return { latTile, lngTile }
-}
-
-// ─── Supertile Grid Helpers ──────────────────────────────────────────
 
 export interface Bounds {
   minLat: number
@@ -96,89 +20,78 @@ export interface Bounds {
   maxLng: number
 }
 
-/**
- * Return the set of supertile IDs that overlap a bounding box at the
- * given grouping factor.
- */
-export function getVisibleSupertileIds(
-  bounds: Bounds,
-  groupingFactor: number,
-): Set<string> {
-  const refLat = (bounds.minLat + bounds.maxLat) / 2
-  const minTile = latLngToTileForRange(bounds.minLat, bounds.minLng, refLat)
-  const maxTile = latLngToTileForRange(bounds.maxLat, bounds.maxLng, refLat)
-
-  const minSuperLat = Math.floor(minTile.latTile / groupingFactor)
-  const maxSuperLat = Math.floor(maxTile.latTile / groupingFactor)
-  const minSuperLng = Math.floor(minTile.lngTile / groupingFactor)
-  const maxSuperLng = Math.floor(maxTile.lngTile / groupingFactor)
-
-  const ids = new Set<string>()
-  for (let lat = minSuperLat; lat <= maxSuperLat; lat++) {
-    for (let lng = minSuperLng; lng <= maxSuperLng; lng++) {
-      ids.add(`${lat}:${lng}`)
-    }
-  }
-  return ids
-}
-
-/**
- * Snap a bounding box outward so its edges align with the supertile grid.
- * This guarantees every fetched supertile is complete — no partial edge tiles.
- */
-export function snapBoundsToGrid(
-  bounds: Bounds,
-  groupingFactor: number,
-): Bounds {
-  const refLat = (bounds.minLat + bounds.maxLat) / 2
-
-  const minTile = latLngToTileForRange(bounds.minLat, bounds.minLng, refLat)
-  const maxTile = latLngToTileForRange(bounds.maxLat, bounds.maxLng, refLat)
-
-  const snappedMinLatTile =
-    Math.floor(minTile.latTile / groupingFactor) * groupingFactor
-  const snappedMaxLatTile =
-    (Math.floor(maxTile.latTile / groupingFactor) + 1) * groupingFactor
-  const snappedMinLngTile =
-    Math.floor(minTile.lngTile / groupingFactor) * groupingFactor
-  const snappedMaxLngTile =
-    (Math.floor(maxTile.lngTile / groupingFactor) + 1) * groupingFactor
-
-  const min = tileToLatLng(snappedMinLatTile, snappedMinLngTile, refLat)
-  const max = tileToLatLng(snappedMaxLatTile, snappedMaxLngTile, refLat)
-
-  return {
-    minLat: min.latitude,
-    maxLat: max.latitude,
-    minLng: min.longitude,
-    maxLng: max.longitude,
-  }
-}
-
-// ─── Density Cache ────────────────────────────────────────────────────
-
 export interface DensityEntry {
   supertile_id: string
   count: number
+  center: { latitude: number; longitude: number }
 }
 
 /**
- * A cache for map-view density data — supertile_id -> count only, no
- * post content. Backs the density/detail fetch split: the map view
- * only ever needs counts to render markers, never full post arrays.
+ * A cell's center, found by plain proportional interpolation of its
+ * (row, col) position within the grid's exact real-world `bounds` --
+ * no cos() or tile-index math needed. This only works out to be exact
+ * (not an approximation) because the server's GRID_REFERENCE_LATITUDE
+ * is a fixed constant rather than derived per-request: that makes both
+ * axes of the grid linear across the whole rectangle, so proportional
+ * interpolation lands on exactly the same point the server's own tile
+ * formula would compute for that cell. row 0/col 0 is `bounds`'s
+ * south-west corner (gridOrigin from the server response); row
+ * increases northward, col increases eastward -- matching how the
+ * server numbers cells relative to gridOrigin.
+ */
+export function interpolateCellCenter(
+  row: number,
+  col: number,
+  gridWidth: number,
+  gridHeight: number,
+  bounds: Bounds,
+): { latitude: number; longitude: number } {
+  const latFrac = (row + 0.5) / gridHeight
+  const lngFrac = (col + 0.5) / gridWidth
+  return {
+    latitude: bounds.minLat + latFrac * (bounds.maxLat - bounds.minLat),
+    longitude: bounds.minLng + lngFrac * (bounds.maxLng - bounds.minLng),
+  }
+}
+
+/**
+ * A cache for map-view density data -- supertile_id -> {count, center}.
+ * Backs the density fetch: the map view only ever needs counts and
+ * positions to render markers, never full post content.
  *
- * There's no meaningful "append a post" operation — the server
- * computed the count, so a locally-known new post can only be
- * optimistically incremented (see incrementCount), not derived.
- * The next real fetch reconciles it with the server's true count.
+ * Centers are stored, not derived lazily on display (the old design,
+ * back when the client could independently recompute a center from an
+ * ID string via its own cos() math): a cell's center can now only be
+ * computed once, at the moment its response arrives, using THAT
+ * response's own grid rectangle (bounds/gridWidth/gridHeight) --
+ * there's no way to correctly recompute it later from just the ID,
+ * once the client no longer does geographic math of its own. See
+ * addDensity below.
+ *
+ * No getMissing/cache-hit-skip-fetch optimization anymore: that
+ * required the client to independently compute which cells a viewport
+ * needed, to check against the cache before deciding whether to fetch
+ * -- exactly the computation being deleted. The map screen now simply
+ * fetches on every pan/zoom-stop (still throttled/debounced), and this
+ * cache's job is just to have something to display immediately while a
+ * new fetch is in flight, and to avoid unbounded growth via
+ * evictOutside.
+ *
+ * No incrementCount either -- the old optimistic post-creation bump
+ * needed client-side tile math (which supertile did this post land in)
+ * that no longer exists; post creation now just triggers a normal
+ * re-fetch instead.
  */
 export class DensityCache {
-  private cache = new Map<string, number>()
+  private cache = new Map<
+    string,
+    { count: number; center: { latitude: number; longitude: number } }
+  >()
   private currentGroupingFactor: number | null = null
 
   /**
    * Store density entries. If groupingFactor changed, clears the old
-   * cache first — a count computed at one grid size is meaningless at
+   * cache first — a cell computed at one grid size is meaningless at
    * another.
    */
   addDensity(entries: DensityEntry[], groupingFactor: number): void {
@@ -188,50 +101,28 @@ export class DensityCache {
     }
 
     for (const entry of entries) {
-      this.cache.set(entry.supertile_id, entry.count)
+      this.cache.set(entry.supertile_id, {
+        count: entry.count,
+        center: entry.center,
+      })
     }
   }
 
   get(supertileId: string): number | undefined {
-    return this.cache.get(supertileId)
+    return this.cache.get(supertileId)?.count
   }
 
-  getMissing(visibleIds: Set<string>, groupingFactor: number): Set<string> {
-    if (this.currentGroupingFactor !== groupingFactor) {
-      return new Set(visibleIds)
-    }
-    const missing = new Set<string>()
+  /** Return cached entries for the given IDs, with their stored centers. */
+  getVisible(visibleIds: Set<string>): DensityEntry[] {
+    const result: DensityEntry[] = []
     for (const id of visibleIds) {
-      if (!this.cache.has(id)) {
-        missing.add(id)
-      }
-    }
-    return missing
-  }
-
-  /**
-   * Return cached entries for the visible set, with centers computed
-   * on demand via getSupertileCenter — center isn't stored, since it's
-   * cheap to derive and storing it would just be denormalized state
-   * that could drift from the grid math.
-   */
-  getVisible(
-    visibleIds: Set<string>,
-    getCenterFn: (id: string) => { latitude: number; longitude: number },
-  ): {
-    supertile_id: string
-    count: number
-    center: { latitude: number; longitude: number }
-  }[] {
-    const result: {
-      supertile_id: string
-      count: number
-      center: { latitude: number; longitude: number }
-    }[] = []
-    for (const id of visibleIds) {
-      const count = this.cache.get(id)
-      if (count !== undefined) {
-        result.push({ supertile_id: id, count, center: getCenterFn(id) })
+      const entry = this.cache.get(id)
+      if (entry) {
+        result.push({
+          supertile_id: id,
+          count: entry.count,
+          center: entry.center,
+        })
       }
     }
     return result
@@ -246,17 +137,6 @@ export class DensityCache {
       }
     }
     return evicted
-  }
-
-  /**
-   * Optimistically bump a supertile's count by 1 (e.g. user just
-   * created a post there). Not authoritative — the next real fetch
-   * reconciles with the server's true count.
-   */
-  incrementCount(supertileId: string, groupingFactor: number): void {
-    if (this.currentGroupingFactor !== groupingFactor) return
-    const existing = this.cache.get(supertileId)
-    this.cache.set(supertileId, (existing ?? 0) + 1)
   }
 
   /** Invalidate a single entry, forcing a re-fetch on next request. */

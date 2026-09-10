@@ -15,6 +15,11 @@ import type {
   UserProfile,
 } from "@loba/shared"
 import { normalizeTags } from "@loba/shared"
+import {
+  GRID_REFERENCE_LATITUDE,
+  computeGridRect,
+  type GridRect,
+} from "../utils/grouping.js"
 
 export class PostService {
   // ─── Post creation (proximity-gated) ────────────────────────────────
@@ -361,51 +366,77 @@ export class PostService {
   // ─── Density query ──────────────────────────────────────────────────
 
   /**
-   * Get post counts grouped by supertile within a bounding box.
-   * Bounds are expected to be pre-snapped to the supertile grid on the
-   * client (see snapBoundsToGrid in postGrouping.ts) so bbox filtering
-   * and grid-cell membership agree exactly.
+   * Get sparse post density for a viewport, as a world-anchored M x N
+   * supertile grid: the grid's own metadata (groupingFactor, origin,
+   * dimensions, exact real-world bounds) plus only the non-empty cells
+   * within it, each as {row, col, count} relative to that origin.
+   *
+   * Takes the client's raw viewport parameters directly -- latitude,
+   * longitude, deltas, viewport width -- rather than a pre-computed
+   * bounding box or groupingFactor. The server is now the only place
+   * that computes grid identity or supertile geometry; the client sends
+   * what it's showing and displays whatever grid this returns, doing no
+   * geographic math of its own. See computeGridRect in utils/grouping.ts
+   * for the actual grid math (grouping factor selection, snapping,
+   * GRID_REFERENCE_LATITUDE) -- this function's job is just the query
+   * and shaping the result around that grid.
    *
    * Applies the same archived_at/expires_at filters as getPostsInBounds
    * so a marker's count never includes posts TileDetailsModal wouldn't
    * show — otherwise count and tap-in content silently disagree.
    */
   async getPostDensity(
-    bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
-    groupingFactor: number,
+    latitude: number,
+    longitude: number,
+    latitudeDelta: number,
+    longitudeDelta: number,
+    viewportWidthPx: number,
     tags?: string[],
-  ): Promise<{ supertile_id: string; count: number }[]> {
+  ): Promise<
+    GridRect & { cells: { row: number; col: number; count: number }[] }
+  > {
     const tagFilter =
       tags && tags.length > 0
         ? sql`AND tags && ARRAY[${sql.join(normalizeTags(tags).map((t) => sql`${t}`))}]::text[]`
         : sql``
 
-    const result = await sql<{ supertile_id: string; count: string }>`
+    const gridRect = computeGridRect(
+      latitude,
+      longitude,
+      latitudeDelta,
+      longitudeDelta,
+      viewportWidthPx,
+    )
+    const { groupingFactor, gridOrigin, bounds } = gridRect
+
+    const result = await sql<{ row: string; col: string; count: string }>`
       WITH supertiles AS (
         SELECT
           floor(
             floor(latitude * 111320 / 3) / ${groupingFactor}
-          ) AS super_lat_tile,
+          ) - ${gridOrigin.latTile} AS row,
           floor(
-            floor(longitude * 111320 * cos(radians(latitude)) / 3) / ${groupingFactor}
-          ) AS super_lng_tile
+            floor(longitude * 111320 * cos(radians(${GRID_REFERENCE_LATITUDE})) / 3) / ${groupingFactor}
+          ) - ${gridOrigin.lngTile} AS col
         FROM posts
         WHERE location && ST_MakeEnvelope(${bounds.minLng}, ${bounds.minLat}, ${bounds.maxLng}, ${bounds.maxLat}, 4326)
           AND archived_at IS NULL
           AND expires_at > NOW()
           ${tagFilter}
       )
-      SELECT
-        super_lat_tile || ':' || super_lng_tile AS supertile_id,
-        COUNT(*) AS count
+      SELECT row, col, COUNT(*) AS count
       FROM supertiles
-      GROUP BY super_lat_tile, super_lng_tile
+      GROUP BY row, col
     `.execute(db)
 
-    return result.rows.map((row) => ({
-      supertile_id: row.supertile_id,
-      count: Number(row.count),
-    }))
+    return {
+      ...gridRect,
+      cells: result.rows.map((r) => ({
+        row: Number(r.row),
+        col: Number(r.col),
+        count: Number(r.count),
+      })),
+    }
   }
 
   // ─── Paginated per-supertile detail query ────────────────────────────
@@ -432,6 +463,15 @@ export class PostService {
     const [superLatTile, superLngTile] = supertileId.split(":").map(Number)
     const now = new Date().toISOString()
 
+    // Grid identity (which supertile a post belongs to) must use
+    // GRID_REFERENCE_LATITUDE, matching getPostDensity above and the
+    // client -- this function receives no bounds/viewport at all, just
+    // a bare supertileId, so unlike getPostDensity there was never a
+    // per-request value available to derive here even during the
+    // intermediate fix. A post whose own latitude previously put it in
+    // a different bucket than getPostDensity's GROUP BY used could be
+    // counted in a marker's total but missing from that marker's tapped
+    // detail view, or vice versa.
     let query = db
       .selectFrom("posts")
       .selectAll()
@@ -439,7 +479,7 @@ export class PostService {
         sql<boolean>`floor(floor(latitude * 111320 / 3) / ${groupingFactor}) = ${superLatTile}`,
       )
       .where(
-        sql<boolean>`floor(floor(longitude * 111320 * cos(radians(latitude)) / 3) / ${groupingFactor}) = ${superLngTile}`,
+        sql<boolean>`floor(floor(longitude * 111320 * cos(radians(${GRID_REFERENCE_LATITUDE})) / 3) / ${groupingFactor}) = ${superLngTile}`,
       )
       .where("archived_at", "is", null)
       .where("expires_at", ">", now)
