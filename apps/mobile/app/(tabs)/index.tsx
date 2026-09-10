@@ -23,6 +23,7 @@ import {
   getGroupingFactor,
   getSupertileCenter,
   getSupertileId,
+  getMaxAllowedLongitudeDelta,
 } from "@/utils/tiles"
 import {
   DensityCache,
@@ -406,6 +407,58 @@ export default function HomeScreen() {
   // Handle region change complete (when user stops panning - fetch posts)
   const handleRegionChangeComplete = useCallback(
     (region: Region) => {
+      // Enforce the app's max zoom-out (#53): past this point,
+      // groupingFactor is frozen at CITY_CAP_GROUPING_FACTOR and the
+      // supertile grid stops changing regardless of further zoom-out --
+      // but the *viewport* would keep growing, eventually putting far
+      // more cells in view than MAX_MARKERS budgets for. Rather than let
+      // that happen, snap back to the max allowed delta and let the
+      // snap's own onRegionChangeComplete (recursing into this function
+      // with an in-bounds region) do the actual fetch.
+      //
+      // Deliberately evaluated at a fixed latitude, not region.latitude:
+      // plain panning doesn't change longitudeDelta, but it does change
+      // latitude, and getMaxAllowedLongitudeDelta is latitude-dependent
+      // -- so using the live region's latitude here caused a real bug:
+      // panning while already at the lock point could make an in-bounds
+      // delta suddenly register as over the (now-recalculated) limit and
+      // trigger a same-center corrective re-zoom, shrinking the viewport
+      // right after a pan and pushing a marker near the edge of the
+      // screen out of the new fetch bounds. A fixed threshold can't
+      // shift under a pan, so it can't cause that.
+      //
+      // The fixed latitude has to be the *highest* latitude the app
+      // cares about, not the lowest: a degree of longitude covers less
+      // ground near the poles, so higher latitude needs a LARGER delta
+      // before the grid actually finishes freezing at
+      // CITY_CAP_GROUPING_FACTOR. Anchoring at the equator (the smallest
+      // such delta) would lock zoom-out before freezing completes for
+      // every latitude north of it -- worse the further north, and this
+      // app already tests up to Utqiagvik, AK (71.2906N, the US's
+      // northernmost point -- see DevTestMenu's test cities), where that
+      // gap would be largest. Anchoring at that latitude instead
+      // guarantees the grid is genuinely frozen by the lock point
+      // everywhere at or south of it, which covers the entire US.
+      const MAX_EXPECTED_LATITUDE = 71.2906 // Utqiagvik, AK
+      const maxDelta = getMaxAllowedLongitudeDelta(
+        MAX_EXPECTED_LATITUDE,
+        viewportWidthPx,
+      )
+      if (region.longitudeDelta > maxDelta) {
+        mapRef.current?.animateToRegion(
+          {
+            ...region,
+            longitudeDelta: maxDelta,
+            // Preserve the viewport's aspect ratio rather than hardcoding
+            // a latitudeDelta, so this doesn't distort the view.
+            latitudeDelta:
+              maxDelta * (region.latitudeDelta / region.longitudeDelta),
+          },
+          300,
+        )
+        return
+      }
+
       const calculatedZoom = getZoomLevel(region.latitudeDelta)
       setZoom(calculatedZoom)
       lastRegion.current = region
@@ -435,7 +488,13 @@ export default function HomeScreen() {
       lastFetchTime.current = now
       fetchVisiblePosts(region, selectedTags)
     },
-    [isLoadingPosts, fetchVisiblePosts, selectedTags, fetchPopularTags],
+    [
+      isLoadingPosts,
+      fetchVisiblePosts,
+      selectedTags,
+      fetchPopularTags,
+      viewportWidthPx,
+    ],
   )
 
   const recenterMap = () => {
