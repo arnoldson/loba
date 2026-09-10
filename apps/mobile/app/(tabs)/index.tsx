@@ -10,7 +10,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native"
-import MapView, { Marker, Region } from "react-native-maps"
+import MapView, { Marker, Polygon, Region } from "react-native-maps"
 import { TileMarker } from "@/components/TileMarker"
 import {
   TileDetailsModal,
@@ -18,21 +18,14 @@ import {
 } from "@/components/TileDetailsModal"
 import { CreatePostModal } from "@/components/CreatePostModal"
 import { TagFilterBar, type PopularTag } from "@/components/TagFilterBar"
-import {
-  getZoomLevel,
-  getGroupingFactor,
-  getSupertileCenter,
-  getSupertileId,
-  getMaxAllowedLongitudeDelta,
-} from "@/utils/tiles"
+import { getZoomLevel, getMaxAllowedLongitudeDelta } from "@/utils/tiles"
 import {
   DensityCache,
   type DensityEntry,
-  getVisibleSupertileIds,
-  snapBoundsToGrid,
   type Bounds,
+  interpolateCellCenter,
 } from "@/utils/postGrouping"
-import { getBoundingBox, getVisibleAreaMeters } from "@/utils/mapBounds"
+import { getBoundingBox } from "@/utils/mapBounds"
 import { perfMonitor } from "@/utils/diagnostics"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DevTestMenu } from "@/components/DevTestMenu"
@@ -42,21 +35,6 @@ import { API_URL } from "@/utils/api"
 
 // Initial map settings
 const INITIAL_LAT_DELTA = 0.005
-
-/**
- * Expand a Region into bounds scaled by `factor` (e.g., 2.0 = 2× the viewport).
- * Used for the eviction zone — supertiles outside this area are pruned from cache.
- */
-function expandRegionToBounds(region: Region, factor: number): Bounds {
-  const latMargin = (region.latitudeDelta * factor) / 2
-  const lngMargin = (region.longitudeDelta * factor) / 2
-  return {
-    minLat: region.latitude - latMargin,
-    maxLat: region.latitude + latMargin,
-    minLng: region.longitude - lngMargin,
-    maxLng: region.longitude + lngMargin,
-  }
-}
 
 function UserLocationDot() {
   return (
@@ -78,6 +56,13 @@ export default function HomeScreen() {
   const [location, setLocation] = useState<Location.LocationObject | null>(null)
   const [zoom, setZoom] = useState(() => getZoomLevel(INITIAL_LAT_DELTA))
   const [isLoadingPosts, setIsLoadingPosts] = useState(false)
+  // Dev-only supertile grid outline overlay -- see issue #58's follow-up.
+  // Deliberately recomputed fresh at render time (see render section)
+  // rather than stored alongside visibleSupertiles: the point is to
+  // reveal drift between a possibly-stale cached marker position and
+  // what the grid looks like right now, not to redraw whatever refLat
+  // happened to be used when that marker was fetched.
+  const [showGridOutline, setShowGridOutline] = useState(false)
 
   // The map fills its container edge-to-edge (absoluteFillObject on a
   // plain flex:1 root, no padding), so window width is an accurate,
@@ -121,6 +106,18 @@ export default function HomeScreen() {
 
   // Track the last region so we can re-fetch when tags change or posts are deleted
   const lastRegion = useRef<Region | null>(null)
+
+  // Grid metadata from the most recent successful density fetch --
+  // bounds/gridWidth/gridHeight, needed for the dev-only grid outline
+  // overlay to draw the exact same M x N rectangle the server returned,
+  // without the client re-deriving it. Also doubles as the source of
+  // the "current visible IDs" set used for cache eviction.
+  const lastGrid = useRef<{
+    bounds: Bounds
+    gridWidth: number
+    gridHeight: number
+    gridOrigin: { latTile: number; lngTile: number }
+  } | null>(null)
 
   // Modal visibility
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false)
@@ -181,11 +178,7 @@ export default function HomeScreen() {
   const fetchVisiblePosts = useCallback(
     async (region: Region, tags?: string[]) => {
       const fetchStartTime = Date.now()
-
-      // getCenter helper bound to the current grouping factor — DensityCache
-      // doesn't store centers itself, they're cheap to derive on demand.
-      const makeGetCenter = (grouping: number) => (id: string) =>
-        getSupertileCenter(id, grouping)
+      const hasTags = tags && tags.length > 0
 
       try {
         if (isLoadingPosts) {
@@ -193,79 +186,24 @@ export default function HomeScreen() {
           return
         }
 
-        // Viewing is never zoom-restricted (standing decision) — grouping
-        // always returns a factor now, no null/too-zoomed-out case.
-        const grouping = getGroupingFactor(
-          region.longitudeDelta,
-          region.latitude,
-          viewportWidthPx,
-        )
-        const getCenter = makeGetCenter(grouping)
-
-        // When tags are active, skip the cache optimization and always fetch
-        // fresh data so filtering is accurate.
-        const hasTags = tags && tags.length > 0
-
-        // 1. Determine which supertile grid cells are visible
-        const viewportBounds = getBoundingBox(region)
-        const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
-
-        console.log(
-          `🔍 Visible: ${visibleIds.size} supertile cells at grouping ${grouping}${
-            hasTags ? ` (filtered by: ${tags!.join(", ")})` : ""
-          }`,
-        )
-
-        // 2. Check which are missing from cache (skip when filtering by tags)
-        if (!hasTags) {
-          const missingIds = densityCache.getMissing(visibleIds, grouping)
-
-          if (missingIds.size === 0) {
-            // Everything is cached — just update the display, no fetch needed!
-            console.log(`✅ Full cache hit — ${visibleIds.size} supertiles`)
-            setVisibleSupertiles(densityCache.getVisible(visibleIds, getCenter))
-
-            // Evict supertiles far from viewport (3× buffer)
-            const evictionBounds = expandRegionToBounds(region, 3.0)
-            const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
-            densityCache.evictOutside(keepIds)
-            return
-          }
-
-          console.log(
-            `📡 Cache miss: ${missingIds.size}/${visibleIds.size} supertiles need fetching`,
-          )
-        }
-
         setIsLoadingPosts(true)
 
-        // 3. Show what we have from cache immediately (no blank screen)
-        if (!hasTags) {
-          const cachedTiles = densityCache.getVisible(visibleIds, getCenter)
-          if (cachedTiles.length > 0) {
-            setVisibleSupertiles(cachedTiles)
-          }
-        }
+        // No explicit "show cached data immediately" step needed: the
+        // previous render's markers simply stay displayed as-is while
+        // this fetch is in flight (state isn't cleared here), so there's
+        // nothing to recompute for that.
 
-        // 4. Fetch the snapped bounding box (aligned to supertile grid) —
-        // density counts only, no post content.
-        const snappedBounds = snapBoundsToGrid(viewportBounds, grouping)
-        const area = getVisibleAreaMeters(region)
-
-        console.log(`🗺️  Visible area: ${area.width}m × ${area.height}m`)
-        console.log(
-          `📦 Snapped bounds: [${snappedBounds.minLat.toFixed(
-            4,
-          )}, ${snappedBounds.minLng.toFixed(
-            4,
-          )}, ${snappedBounds.maxLat.toFixed(
-            4,
-          )}, ${snappedBounds.maxLng.toFixed(4)}]`,
-        )
-
+        // Simplest possible query: raw viewport parameters only. The
+        // server determines groupingFactor, the grid rectangle, and
+        // which cells are non-empty entirely on its own -- see
+        // apps/backend/src/utils/grouping.ts. The client does no
+        // geographic computation here at all.
         const body: Record<string, any> = {
-          ...snappedBounds,
-          groupingFactor: grouping,
+          latitude: region.latitude,
+          longitude: region.longitude,
+          latitudeDelta: region.latitudeDelta,
+          longitudeDelta: region.longitudeDelta,
+          viewportWidthPx,
         }
         if (hasTags) {
           body.tags = tags
@@ -296,28 +234,59 @@ export default function HomeScreen() {
 
         if (data.success) {
           const fetchDuration = Date.now() - fetchStartTime
-          const density: DensityEntry[] = data.density
-          console.log(
-            `✅ Fetched ${density.length} supertile counts (DB: ${
-              data.dbQueryTime || "N/A"
-            }ms, Total: ${fetchDuration}ms)`,
-          )
-          perfMonitor.logFetch(fetchDuration, density.length)
+          const {
+            groupingFactor,
+            gridOrigin,
+            gridWidth,
+            gridHeight,
+            bounds,
+            cells,
+          } = data as {
+            groupingFactor: number
+            gridOrigin: { latTile: number; lngTile: number }
+            gridWidth: number
+            gridHeight: number
+            bounds: Bounds
+            cells: { row: number; col: number; count: number }[]
+          }
 
-          // 5. Add to cache
+          console.log(
+            `✅ Fetched ${cells.length} non-empty cells of a ${gridWidth}x${gridHeight} grid ` +
+              `(grouping ${groupingFactor}, ${fetchDuration}ms)${hasTags ? ` (filtered by: ${tags!.join(", ")})` : ""}`,
+          )
+          perfMonitor.logFetch(fetchDuration, cells.length)
+
+          // Interpolate each cell's center within the server's exact
+          // grid rectangle -- plain proportional math, no cos(). This is
+          // the only place the client computes a geographic position at
+          // all now.
+          const entries: DensityEntry[] = cells.map((c) => ({
+            supertile_id: `${gridOrigin.latTile + c.row}:${gridOrigin.lngTile + c.col}`,
+            count: c.count,
+            center: interpolateCellCenter(
+              c.row,
+              c.col,
+              gridWidth,
+              gridHeight,
+              bounds,
+            ),
+          }))
+          const visibleIds = new Set(entries.map((e) => e.supertile_id))
+
           if (hasTags) {
             densityCache.clear()
           }
+          densityCache.addDensity(entries, groupingFactor)
+          lastGrid.current = { bounds, gridWidth, gridHeight, gridOrigin }
 
-          densityCache.addDensity(density, grouping)
+          setVisibleSupertiles(densityCache.getVisible(visibleIds))
 
-          // 6. Update display from cache
-          setVisibleSupertiles(densityCache.getVisible(visibleIds, getCenter))
-
-          // 7. Evict far-away supertiles (keep 3× viewport as buffer)
-          const evictionBounds = expandRegionToBounds(region, 3.0)
-          const keepIds = getVisibleSupertileIds(evictionBounds, grouping)
-          densityCache.evictOutside(keepIds)
+          // No buffer anymore -- keep exactly what the latest fetch
+          // covers. The 3x-buffer eviction margin existed to support the
+          // cache-hit-skip-fetch optimization on small pans, which no
+          // longer exists (every pan re-fetches), so there's nothing
+          // left for the buffer to protect against a redundant fetch.
+          densityCache.evictOutside(visibleIds)
 
           console.log(`💾 Density cache: ${densityCache.size} tiles`)
         }
@@ -331,16 +300,11 @@ export default function HomeScreen() {
         if (!isBannedError) {
           console.error("❌ Error fetching post density:", error)
         }
-
-        const grouping = getGroupingFactor(
-          region.longitudeDelta,
-          region.latitude,
-          viewportWidthPx,
-        )
-        const getCenter = makeGetCenter(grouping)
-        const viewportBounds = getBoundingBox(region)
-        const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
-        setVisibleSupertiles(densityCache.getVisible(visibleIds, getCenter))
+        // No fallback recomputation of "what's visible" on error -- the
+        // client can't determine that independently anymore without a
+        // server response. Leaving the display as whatever it already
+        // was is a reasonable failure mode on its own (stale-but-cached
+        // beats a guess), not a gap to fill.
       } finally {
         setIsLoadingPosts(false)
       }
@@ -539,52 +503,30 @@ export default function HomeScreen() {
     [],
   )
 
-  // Called by CreatePostModal after a successful post
-  const handlePostCreated = useCallback(
-    (post: { tile_id: string }) => {
-      if (location) {
-        const region: Region = {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          latitudeDelta: INITIAL_LAT_DELTA,
-          longitudeDelta: INITIAL_LAT_DELTA,
-        }
-        const grouping = getGroupingFactor(
-          region.longitudeDelta,
-          location.coords.latitude,
-          viewportWidthPx,
-        )
-        // Optimistic +1 on the supertile this post landed in — not
-        // authoritative, the next real fetch reconciles with the
-        // server's true count. We don't have raw post content to cache
-        // anymore, only the aggregate.
-        const supertileId = getSupertileId(post.tile_id, grouping)
-        densityCache.incrementCount(supertileId, grouping)
-
-        const viewportBounds = getBoundingBox(region)
-        const visibleIds = getVisibleSupertileIds(viewportBounds, grouping)
-        setVisibleSupertiles(
-          densityCache.getVisible(visibleIds, (id) =>
-            getSupertileCenter(id, grouping),
-          ),
-        )
-      }
-      // A new post may introduce a new tag, or bump an existing tag's
-      // count — refresh immediately rather than waiting for the next
-      // pan/zoom stop. Uses the real current viewport (lastRegion) rather
-      // than a GPS-reconstructed region, since tags are scoped to what's
-      // actually visible, which may differ from the user's raw location
-      // if they've panned since their last fetch.
-      const tagsRegion = lastRegion.current ?? {
-        latitude: location?.coords.latitude ?? 0,
-        longitude: location?.coords.longitude ?? 0,
-        latitudeDelta: INITIAL_LAT_DELTA,
-        longitudeDelta: INITIAL_LAT_DELTA,
-      }
-      fetchPopularTags(tagsRegion)
-    },
-    [location, densityCache, fetchPopularTags, viewportWidthPx],
-  )
+  // Called by CreatePostModal after a successful post. No more optimistic
+  // count-bump -- that required client-side tile math (which supertile
+  // did this post land in) that no longer exists now that grid identity
+  // is entirely server-side. A brief delay (one fetch round-trip) before
+  // the new post's count shows up on the map, in exchange for not
+  // keeping a shadow copy of grid math on the client just for this one
+  // case.
+  const handlePostCreated = useCallback(() => {
+    // Prefer the real current viewport (lastRegion) over a
+    // GPS-reconstructed one, since the user may have panned since their
+    // last fetch -- both the density re-fetch and the tags refresh
+    // should reflect what's actually on screen, not just where they are.
+    const region = lastRegion.current ?? {
+      latitude: location?.coords.latitude ?? 0,
+      longitude: location?.coords.longitude ?? 0,
+      latitudeDelta: INITIAL_LAT_DELTA,
+      longitudeDelta: INITIAL_LAT_DELTA,
+    }
+    fetchVisiblePosts(region, selectedTags)
+    // A new post may introduce a new tag, or bump an existing tag's
+    // count — refresh immediately rather than waiting for the next
+    // pan/zoom stop.
+    fetchPopularTags(region)
+  }, [location, fetchVisiblePosts, fetchPopularTags, selectedTags])
 
   // Called by TileDetailsModal after a post is deleted. Invalidates just
   // the affected supertile's cached count rather than the whole cache —
@@ -617,20 +559,66 @@ export default function HomeScreen() {
     setSelectedTags(tags)
   }, [])
 
-  // Apply marker limit to prevent native crashes
-  //
-  // Uses lastRegion's latitude/longitudeDelta (not `location`/`zoom`) so
-  // this matches whatever actually drove the density data currently in
-  // visibleSupertiles — fetchVisiblePosts computes groupingFactor from
-  // region.latitude/longitudeDelta too. Falling back to location, then
-  // INITIAL_LAT_DELTA, only matters before the very first fetch has set
-  // lastRegion.
-  const groupingFactor = getGroupingFactor(
-    lastRegion.current?.longitudeDelta ?? INITIAL_LAT_DELTA,
-    lastRegion.current?.latitude ?? location?.coords.latitude ?? 37.78825,
-    viewportWidthPx,
-  )
+  // Uses densityCache.groupingFactor -- the value the CURRENTLY CACHED
+  // data was actually fetched under -- rather than recomputing fresh
+  // from lastRegion.current. Those two can disagree: lastRegion.current
+  // updates synchronously on every pan, but a fetch is async, and
+  // fetchVisiblePosts's own `grouping` is captured from whatever region
+  // was current when THAT fetch started. If the user pans again before
+  // an in-flight fetch resolves (easy in a dense area with a lot to
+  // aggregate), lastRegion.current moves on before the older fetch
+  // writes its results -- and a mismatched groupingFactor doesn't just
+  // shift markers slightly, it implies a completely different grid, so
+  // rendering markers/outlines against a freshly-recomputed value while
+  // the cache actually holds data from an older one produces exactly
+  // the kind of unrelated-looking scatter this was.
+  // Falls back to 1 only before any fetch has ever completed
+  // (densityCache.groupingFactor starts null) -- there's nothing to
+  // render yet at that point regardless, so the exact fallback value
+  // doesn't matter.
+  const groupingFactor = densityCache.groupingFactor ?? 1
+
+  // Dev-only grid outline overlay data: the exact M x N rectangle from
+  // the most recent fetch (lastGrid), covering every cell -- not just
+  // populated ones (that made it look like the grid didn't cover the
+  // viewport at all, it just meant every empty cell was silently
+  // skipped). Drawn directly from the server's own bounds/gridWidth/
+  // gridHeight now, with no client-side grid computation at all.
+  const gridOutlineCells = useMemo(() => {
+    if (!__DEV__ || !showGridOutline || !lastGrid.current) return []
+    const { bounds, gridWidth, gridHeight } = lastGrid.current
+    // Safety cap, matching MAX_MARKERS's spirit -- the #53 zoom lock
+    // should keep grids well under this in normal use, but dev-only
+    // tooling shouldn't be able to freeze the UI if that's ever wrong.
+    if (gridWidth * gridHeight > 500) {
+      console.warn(
+        `⚠️  Grid outline skipped -- ${gridWidth}x${gridHeight} is too large to render`,
+      )
+      return []
+    }
+    const latStep = (bounds.maxLat - bounds.minLat) / gridHeight
+    const lngStep = (bounds.maxLng - bounds.minLng) / gridWidth
+    const cells: { row: number; col: number; bounds: Bounds }[] = []
+    for (let row = 0; row < gridHeight; row++) {
+      for (let col = 0; col < gridWidth; col++) {
+        cells.push({
+          row,
+          col,
+          bounds: {
+            minLat: bounds.minLat + row * latStep,
+            maxLat: bounds.minLat + (row + 1) * latStep,
+            minLng: bounds.minLng + col * lngStep,
+            maxLng: bounds.minLng + (col + 1) * lngStep,
+          },
+        })
+      }
+    }
+    return cells
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showGridOutline, visibleSupertiles])
+
   const supertiles = useMemo(() => {
+    // Apply marker limit to prevent native crashes
     const MAX_MARKERS = 150
     if (visibleSupertiles.length > MAX_MARKERS) {
       console.warn(
@@ -700,6 +688,25 @@ export default function HomeScreen() {
             )
           })}
 
+          {__DEV__ &&
+            showGridOutline &&
+            gridOutlineCells.map(({ row, col, bounds }) => (
+              <Polygon
+                key={`outline-${groupingFactor}-${row}-${col}`}
+                coordinates={[
+                  { latitude: bounds.minLat, longitude: bounds.minLng },
+                  { latitude: bounds.minLat, longitude: bounds.maxLng },
+                  { latitude: bounds.maxLat, longitude: bounds.maxLng },
+                  { latitude: bounds.maxLat, longitude: bounds.minLng },
+                ]}
+                strokeColor="rgba(0, 200, 255, 0.9)"
+                strokeWidth={1}
+                fillColor="rgba(0, 200, 255, 0.08)"
+                zIndex={0}
+                tappable={false}
+              />
+            ))}
+
           {location && (
             <Marker
               coordinate={{
@@ -721,6 +728,8 @@ export default function HomeScreen() {
           <DevTestMenu
             mapRef={mapRef}
             overrideLocation={overrideLocationForTesting}
+            showGridOutline={showGridOutline}
+            onToggleGridOutline={() => setShowGridOutline((v) => !v)}
           />
         </ErrorBoundary>
       )}

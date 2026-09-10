@@ -100,11 +100,22 @@ interface DevTestMenuProps {
   // screen -- post creation, the "you are here" marker, recenter --
   // follow the hop too, not just the map camera.
   overrideLocation: (coords: { latitude: number; longitude: number }) => void
+  // Toggles the supertile grid outline overlay -- see issue #58's
+  // follow-up. Lifted to index.tsx rather than owned here since the
+  // overlay itself is rendered alongside the markers on MapView, not
+  // inside this panel.
+  showGridOutline: boolean
+  onToggleGridOutline: () => void
 }
 
 type CityAction = "hop" | "seed" | "clear"
 
-export function DevTestMenu({ mapRef, overrideLocation }: DevTestMenuProps) {
+export function DevTestMenu({
+  mapRef,
+  overrideLocation,
+  showGridOutline,
+  onToggleGridOutline,
+}: DevTestMenuProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [shouldCrash, setShouldCrash] = useState(false)
@@ -250,6 +261,15 @@ export function DevTestMenu({ mapRef, overrideLocation }: DevTestMenuProps) {
         >
           <Text style={styles.crashButtonText}>💣</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.crashButton,
+            showGridOutline && styles.gridButtonActive,
+          ]}
+          onPress={onToggleGridOutline}
+        >
+          <Text style={styles.crashButtonText}>▦</Text>
+        </TouchableOpacity>
       </View>
 
       {isExpanded && (
@@ -391,6 +411,9 @@ const styles = StyleSheet.create({
   },
   crashButtonText: {
     fontSize: 14,
+  },
+  gridButtonActive: {
+    backgroundColor: "rgba(0, 200, 255, 0.35)",
   },
   headerText: {
     color: "#fff",
