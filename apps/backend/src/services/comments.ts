@@ -1,7 +1,11 @@
 import { db } from "../db/index.js";
 import { generateDisplayName } from "../utils/displayName.js";
 import type { PublicComment, UserProfile } from "@loba/shared";
-import { isWithinProximity } from "../utils/proximity.js";
+import {
+  isWithinProximity,
+  assertLocationQuality,
+  checkIpConsistency,
+} from "../utils/proximity.js";
 
 // Internal type matching what Kysely returns from the comments table
 interface CommentRow {
@@ -24,6 +28,9 @@ export class CommentService {
     content: string,
     userLat?: number,
     userLng?: number,
+    locationAccuracy?: number,
+    locationTimestamp?: number,
+    requestIp?: string,
   ): Promise<PublicComment> {
     // Verify the post exists
     const post = await db
@@ -46,9 +53,20 @@ export class CommentService {
 
     if (!hasReaction) {
       // No prior reaction — check proximity
-      if (userLat == null || userLng == null) {
+      if (
+        userLat == null ||
+        userLng == null ||
+        locationAccuracy == null ||
+        locationTimestamp == null
+      ) {
         throw new Error("You must be near this post or have voted to comment");
       }
+
+      // Throws LocationQualityError (mapped to 403 by the route) on a
+      // stale or implausibly imprecise reading — same check as
+      // createPost/reactToPost (#43). Only relevant here, since a
+      // reaction-based bypass sends no location at all.
+      assertLocationQuality(locationAccuracy, locationTimestamp);
 
       const postLat =
         typeof post.latitude === "string"
@@ -61,6 +79,17 @@ export class CommentService {
 
       if (!isWithinProximity(userLat, userLng, postLat, postLng)) {
         throw new Error("You must be near this post or have voted to comment");
+      }
+
+      // Logged only, same as reactions -- comments have no moderation
+      // column to flag.
+      if (requestIp) {
+        const { consistent } = checkIpConsistency(requestIp, userLat, userLng);
+        if (!consistent) {
+          console.warn(
+            `IP/location mismatch on comment: user=${userId} post=${postId} ip=${requestIp}`,
+          );
+        }
       }
     }
 
