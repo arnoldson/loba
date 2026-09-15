@@ -19,6 +19,7 @@ import {
   isRestrictedError,
   UNDER_REVIEW_MESSAGE,
 } from "@/utils/api"
+import { getVerifiedLocation } from "@/utils/location"
 
 // ─── Configuration ──────────────────────────────────────────────────
 
@@ -276,6 +277,20 @@ export function TileDetailsModal({
     setError(null)
     setInfoMessage(null)
     try {
+      // Fresh capture, not the possibly-stale userLocation prop — see
+      // utils/location.ts (#43). Failure here isn't fatal: the server
+      // only needs location at all if this user hasn't already reacted
+      // to the post, so we still send the request with no location
+      // fields and let the server decide, matching prior behavior when
+      // userLocation was unavailable.
+      let location: Awaited<ReturnType<typeof getVerifiedLocation>> | null =
+        null
+      try {
+        location = await getVerifiedLocation()
+      } catch {
+        // Fall through with no location — handled server-side.
+      }
+
       const res = await fetch(
         `${API_URL}/api/posts/${selectedPost.id}/comments`,
         {
@@ -286,8 +301,10 @@ export function TileDetailsModal({
           },
           body: JSON.stringify({
             content: newComment.trim(),
-            latitude: userLocation?.latitude,
-            longitude: userLocation?.longitude,
+            latitude: location?.latitude,
+            longitude: location?.longitude,
+            locationAccuracy: location?.accuracy,
+            locationTimestamp: location?.timestamp,
           }),
         },
       )
@@ -306,20 +323,29 @@ export function TileDetailsModal({
     } finally {
       setIsSubmitting(false)
     }
-  }, [
-    selectedPost,
-    newComment,
-    authToken,
-    authHeaders,
-    userLocation?.latitude,
-    userLocation?.longitude,
-  ])
+  }, [selectedPost, newComment, authToken, authHeaders])
 
   // ─── Reaction handler ───────────────────────────────────────────────
 
   const handleReaction = useCallback(
     async (post: PublicPost, reaction: "upvote" | "downvote") => {
       if (!authToken || !userLocation) return
+
+      // Fresh capture, not the possibly-stale userLocation prop — see
+      // utils/location.ts (#43). Unlike comments, reactions always
+      // require location server-side, so a capture failure here bails
+      // out before the optimistic update rather than after.
+      let location: Awaited<ReturnType<typeof getVerifiedLocation>>
+      try {
+        location = await getVerifiedLocation()
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Could not get your location"
+        Alert.alert("Location unavailable", message)
+        return
+      }
 
       // Optimistic update
       const current = localReactions.get(post.id)
@@ -369,8 +395,10 @@ export function TileDetailsModal({
           },
           body: JSON.stringify({
             reaction,
-            latitude: userLocation.latitude,
-            longitude: userLocation.longitude,
+            latitude: location.latitude,
+            longitude: location.longitude,
+            locationAccuracy: location.accuracy,
+            locationTimestamp: location.timestamp,
           }),
         })
         const data = await res.json()
