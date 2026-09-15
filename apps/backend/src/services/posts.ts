@@ -4,6 +4,8 @@ import { getTileId } from "../db/tiles.js"
 import { generateDisplayName } from "../utils/displayName.js"
 import {
   isWithinProximity,
+  assertLocationQuality,
+  checkIpConsistency,
   computeExtendedExpiry,
   DEFAULT_TTL_HOURS,
 } from "../utils/proximity.js"
@@ -22,9 +24,30 @@ import {
 } from "../utils/grouping.js"
 
 export class PostService {
-  // ─── Post creation (proximity-gated) ────────────────────────────────
+  // ─── Post creation (location quality + IP corroboration, #43) ───────
 
-  async createPost(data: CreatePostRequest, userId: string): Promise<OwnPost> {
+  /**
+   * requestIp is the connection's real client IP (request.ip, with
+   * trustProxy honoring Railway's forwarding) -- see checkIpConsistency
+   * in utils/proximity.ts for why this specific signal, and why it's a
+   * flag rather than a rejection.
+   */
+  async createPost(
+    data: CreatePostRequest,
+    userId: string,
+    requestIp: string,
+  ): Promise<OwnPost> {
+    // Throws LocationQualityError (mapped to 403 by the route) on a
+    // stale or implausibly imprecise reading. Deliberately checked
+    // before any DB work.
+    assertLocationQuality(data.locationAccuracy, data.locationTimestamp)
+
+    const { consistent } = checkIpConsistency(
+      requestIp,
+      data.latitude,
+      data.longitude,
+    )
+
     const tileId = getTileId(data.latitude, data.longitude)
     const postId = crypto.randomUUID()
     const now = new Date()
@@ -47,6 +70,7 @@ export class PostService {
         archived_at: null,
         created_at: now.toISOString(),
         updated_at: now.toISOString(),
+        flagged_ip_mismatch: !consistent,
       })
       .returningAll()
       .executeTakeFirstOrThrow()
@@ -84,12 +108,20 @@ export class PostService {
     reaction: "upvote" | "downvote",
     userLat: number,
     userLng: number,
+    locationAccuracy: number,
+    locationTimestamp: number,
+    requestIp: string,
   ): Promise<{
     reaction: "upvote" | "downvote" | null
     upvote_count: number
     downvote_count: number
     new_expires_at: string
   }> {
+    // Throws LocationQualityError (mapped to 403 by the route) on a
+    // stale or implausibly imprecise reading. Checked before any DB
+    // work, same as createPost.
+    assertLocationQuality(locationAccuracy, locationTimestamp)
+
     // 1. Get the post
     const post = await db
       .selectFrom("posts")
@@ -131,6 +163,15 @@ export class PostService {
 
     if (!isWithinProximity(userLat, userLng, postLat, postLng)) {
       throw new Error("You must be near this post to react")
+    }
+
+    // Logged only -- reactions have no moderation review flow to
+    // consume a stored flag the way posts do (flagged_ip_mismatch).
+    const { consistent } = checkIpConsistency(requestIp, userLat, userLng)
+    if (!consistent) {
+      console.warn(
+        `IP/location mismatch on reaction: user=${userId} post=${postId} ip=${requestIp}`,
+      )
     }
 
     // 3. Check for existing reaction
@@ -540,7 +581,11 @@ export class PostService {
       const isVerified = profile?.verification_status === "verified"
       const isOwn = !!requestingUserId && post.user_id === requestingUserId
 
-      const { user_id: _uid, ...rest } = post
+      // flagged_ip_mismatch is moderation-only (#43) -- strip it here
+      // same as user_id, even for the post's own author, so a spoofer
+      // can't tell they've been flagged and adjust behavior.
+      const { user_id: _uid, flagged_ip_mismatch: _flag, ...rest } =
+        post as unknown as Post & { flagged_ip_mismatch?: boolean }
 
       return {
         ...rest,
@@ -553,8 +598,13 @@ export class PostService {
   }
 
   private toOwnPost(post: Post, profile: UserProfile | undefined): OwnPost {
+    // flagged_ip_mismatch is moderation-only (#43) -- strip it even
+    // here, so the author themself can't see they've been flagged.
+    const { flagged_ip_mismatch: _flag, ...rest } =
+      post as unknown as Post & { flagged_ip_mismatch?: boolean }
+
     return {
-      ...post,
+      ...rest,
       display_name: post.user_id
         ? generateDisplayName(post.user_id, post.id)
         : "Anonymous",

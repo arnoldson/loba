@@ -6,6 +6,7 @@
 import type { FastifyInstance } from "fastify"
 import { PostService } from "../services/posts.js"
 import { requireAuth } from "../middleware/auth.js"
+import { LocationQualityError } from "../utils/proximity.js"
 import type { ReactToPostRequest, ReactToPostResponse } from "@loba/shared"
 
 export async function reactionRoutes(fastify: FastifyInstance) {
@@ -30,8 +31,13 @@ export async function reactionRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       try {
         const userId = request.userId!
-        const { reaction, latitude, longitude } =
-          request.body as ReactToPostRequest
+        const {
+          reaction,
+          latitude,
+          longitude,
+          locationAccuracy,
+          locationTimestamp,
+        } = request.body as ReactToPostRequest
 
         // Validate input
         if (!reaction || !["upvote", "downvote"].includes(reaction)) {
@@ -56,12 +62,26 @@ export async function reactionRoutes(fastify: FastifyInstance) {
           })
         }
 
+        if (locationAccuracy == null || locationTimestamp == null) {
+          return reply.code(400).send({
+            success: false,
+            reaction: null,
+            upvote_count: 0,
+            downvote_count: 0,
+            new_expires_at: "",
+            error: "locationAccuracy and locationTimestamp are required",
+          })
+        }
+
         const result = await postService.reactToPost(
           request.params.id,
           userId,
           reaction,
           latitude,
           longitude,
+          locationAccuracy,
+          locationTimestamp,
+          request.ip,
         )
 
         return {
@@ -69,6 +89,17 @@ export async function reactionRoutes(fastify: FastifyInstance) {
           ...result,
         }
       } catch (error) {
+        if (error instanceof LocationQualityError) {
+          return reply.code(403).send({
+            success: false,
+            reaction: null,
+            upvote_count: 0,
+            downvote_count: 0,
+            new_expires_at: "",
+            error: error.message,
+          })
+        }
+
         const message =
           error instanceof Error ? error.message : "Failed to react to post"
 

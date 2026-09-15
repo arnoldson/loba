@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import { PostService } from "../services/posts.js"
 import { requireAuth, optionalAuth } from "../middleware/auth.js"
+import { LocationQualityError } from "../utils/proximity.js"
 import type {
   CreatePostRequest,
   CreatePostResponse,
@@ -20,13 +21,37 @@ export async function postRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       try {
         const userId = request.userId!
-        const post = await postService.createPost(request.body, userId)
+        const { locationAccuracy, locationTimestamp } = request.body
+
+        if (locationAccuracy == null || locationTimestamp == null) {
+          reply.code(400).send({
+            success: false,
+            post: {} as any,
+            error: "locationAccuracy and locationTimestamp are required",
+          })
+          return
+        }
+
+        const post = await postService.createPost(
+          request.body,
+          userId,
+          request.ip,
+        )
 
         reply.send({
           success: true,
           post,
         })
       } catch (error) {
+        if (error instanceof LocationQualityError) {
+          reply.code(403).send({
+            success: false,
+            post: {} as any,
+            error: error.message,
+          })
+          return
+        }
+
         console.error("Error creating post:")
         console.error("Error details:", error)
         console.error(
