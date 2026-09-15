@@ -73,11 +73,22 @@ export type PublicComment = Omit<Comment, "user_id"> & {
 
 // ─── API Request types ──────────────────────────────────────────────
 
+// locationAccuracy (meters, from CLLocation.horizontalAccuracy) and
+// locationTimestamp (ms since epoch, from the GPS fix itself, not
+// Date.now() at send time) let the server independently judge the
+// *quality* of a claimed location -- see utils/proximity.ts on the
+// backend. This is not a second location field to cross-check the
+// first against (a request-body value can't corroborate itself); it's
+// metadata about the one reading, captured fresh at the moment of the
+// gated action -- see apps/mobile/utils/location.ts.
+
 export type CreatePostRequest = {
   content: string
   tags: string[]
   latitude: number
   longitude: number
+  locationAccuracy: number
+  locationTimestamp: number
   photo_url?: string
 }
 
@@ -86,14 +97,23 @@ export type GetPostsRequest = {
   limit?: number
 }
 
+// latitude/longitude/location metadata are optional because a comment
+// from a user who has already voted on the post skips the proximity
+// gate entirely -- see CommentService.createComment.
 export type CreateCommentRequest = {
   content: string
+  latitude?: number
+  longitude?: number
+  locationAccuracy?: number
+  locationTimestamp?: number
 }
 
 export type ReactToPostRequest = {
   reaction: "upvote" | "downvote"
   latitude: number
   longitude: number
+  locationAccuracy: number
+  locationTimestamp: number
 }
 
 export type ReportReason = "spam" | "harassment" | "illegal" | "other"

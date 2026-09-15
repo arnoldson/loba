@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { CommentService } from "../services/comments.js";
 import { requireAuth, optionalAuth } from "../middleware/auth.js";
+import { LocationQualityError } from "../utils/proximity.js";
 import type {
   CreateCommentRequest,
   CreateCommentResponse,
@@ -70,10 +71,8 @@ export async function commentRoutes(fastify: FastifyInstance) {
           });
         }
 
-        const { latitude, longitude } = request.body as CreateCommentRequest & {
-          latitude?: number;
-          longitude?: number;
-        };
+        const { latitude, longitude, locationAccuracy, locationTimestamp } =
+          request.body;
 
         const comment = await commentService.createComment(
           request.params.postId,
@@ -81,6 +80,9 @@ export async function commentRoutes(fastify: FastifyInstance) {
           content.trim(),
           latitude,
           longitude,
+          locationAccuracy,
+          locationTimestamp,
+          request.ip,
         );
 
         reply.code(201).send({
@@ -88,6 +90,15 @@ export async function commentRoutes(fastify: FastifyInstance) {
           comment,
         });
       } catch (error) {
+        if (error instanceof LocationQualityError) {
+          reply.code(403).send({
+            success: false,
+            comment: {} as any,
+            error: error.message,
+          });
+          return;
+        }
+
         const message =
           error instanceof Error ? error.message : "Failed to create comment";
         const status =

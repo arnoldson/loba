@@ -17,10 +17,12 @@
     "@supabase/supabase-js": "^2.97.0",
     "dotenv": "^16.3.1",
     "fastify": "^5.7.4",
+    "geoip-lite": "^1.4.10",
     "kysely": "^0.29.4",
     "pg": "^8.11.3"
   },
   "devDependencies": {
+    "@types/geoip-lite": "^1.4.4",
     "@types/node": "^20.10.6",
     "@types/pg": "^8.10.9",
     "pino-pretty": "^13.1.3",

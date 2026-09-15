@@ -32,6 +32,10 @@ export interface PostsTable {
   created_at: string
   updated_at: string
   location: Generated<string> // PostGIS geography column — managed by trigger
+  // Moderation-only signal (#43): claimed location's IP-geolocation was
+  // wildly inconsistent with it. Never exposed to clients — see the
+  // explicit strip in PostService.toPublicPosts/toOwnPost.
+  flagged_ip_mismatch: Generated<boolean> // DEFAULT false in DB
 }
 
 export interface CommentsTable {

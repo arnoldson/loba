@@ -13,12 +13,11 @@ import {
 import type { CreatePostRequest, CreatePostResponse } from "@loba/shared"
 import { useAuth } from "@/utils/auth"
 import { API_URL, isBannedError, UNDER_REVIEW_MESSAGE } from "@/utils/api"
+import { getVerifiedLocation } from "@/utils/location"
 
 interface CreatePostModalProps {
   visible: boolean
   onClose: () => void
-  latitude: number
-  longitude: number
   onPostCreated: (post: CreatePostResponse["post"]) => void
 }
 
@@ -52,13 +51,12 @@ function escapeRegExp(value: string): string {
 export function CreatePostModal({
   visible,
   onClose,
-  latitude,
-  longitude,
   onPostCreated,
 }: CreatePostModalProps) {
   const { getAuthHeaders } = useAuth()
 
   const [postText, setPostText] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Derived, not stored: tags are always exactly what's parseable from the
   // current text, so there's nothing to lose sync with.
@@ -70,14 +68,22 @@ export function CreatePostModal({
       return
     }
 
-    const requestBody: CreatePostRequest = {
-      content: postText,
-      tags,
-      latitude,
-      longitude,
-    }
+    setIsSubmitting(true)
 
     try {
+      // Fresh capture, not whatever location the map screen happened to
+      // be holding when this modal opened — see utils/location.ts (#43).
+      const location = await getVerifiedLocation()
+
+      const requestBody: CreatePostRequest = {
+        content: postText,
+        tags,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        locationAccuracy: location.accuracy,
+        locationTimestamp: location.timestamp,
+      }
+
       const response = await fetch(`${API_URL}/api/posts`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -110,6 +116,8 @@ export function CreatePostModal({
         Alert.alert("Error", message)
         console.error(error)
       }
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -179,10 +187,13 @@ export function CreatePostModal({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.postButton}
+              style={[styles.postButton, isSubmitting && styles.postButtonDisabled]}
               onPress={handleCreatePost}
+              disabled={isSubmitting}
             >
-              <Text style={styles.postButtonText}>Post</Text>
+              <Text style={styles.postButtonText}>
+                {isSubmitting ? "Posting…" : "Post"}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -270,6 +281,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#007AFF",
     marginLeft: 10,
     alignItems: "center",
+  },
+  postButtonDisabled: {
+    opacity: 0.6,
   },
   postButtonText: {
     fontSize: 16,

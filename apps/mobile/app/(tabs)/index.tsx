@@ -772,8 +772,6 @@ export default function HomeScreen() {
         <CreatePostModal
           visible={isCreateModalVisible}
           onClose={() => setIsCreateModalVisible(false)}
-          latitude={location.coords.latitude}
-          longitude={location.coords.longitude}
           onPostCreated={handlePostCreated}
         />
       )}
