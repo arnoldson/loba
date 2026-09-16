@@ -20,6 +20,7 @@ import {
   UNDER_REVIEW_MESSAGE,
 } from "@/utils/api"
 import { getVerifiedLocation } from "@/utils/location"
+import type { Bounds } from "@/utils/postGrouping"
 
 // ─── Configuration ──────────────────────────────────────────────────
 
@@ -29,14 +30,16 @@ const PAGE_SIZE = 25
 
 /**
  * What the modal receives on tap — just enough to identify and fetch a
- * supertile's posts. Deliberately lightweight: since the map view now
- * only fetches aggregate counts (see /api/posts/density-in-bounds),
- * there's no pre-fetched posts[] to hand off anymore. The modal owns
- * its own paginated fetch instead.
+ * sector's posts. Deliberately lightweight: since the map view only
+ * fetches aggregate counts (see /api/posts/density-in-bounds), there's
+ * no pre-fetched posts[] to hand off anymore. The modal owns its own
+ * paginated fetch instead, scoped to the sector's own `bounds` (#63 --
+ * there's no persistent sector identity to look up by, so the tap
+ * snapshots the bbox itself).
  */
 export interface SelectedTile {
-  supertile_id: string
-  groupingFactor: number
+  key: string
+  bounds: Bounds
   count: number
   center: { latitude: number; longitude: number }
 }
@@ -48,6 +51,7 @@ interface TileDetailsModalProps {
   authToken?: string | null
   onPostDeleted?: (postId: string) => void
   userLocation?: { latitude: number; longitude: number } | null
+  selectedTags?: string[]
 }
 
 export function TileDetailsModal({
@@ -57,6 +61,7 @@ export function TileDetailsModal({
   authToken,
   onPostDeleted,
   userLocation,
+  selectedTags,
 }: TileDetailsModalProps) {
   // ─── State ──────────────────────────────────────────────────────────
 
@@ -69,7 +74,7 @@ export function TileDetailsModal({
   const [postsError, setPostsError] = useState<string | null>(null)
   const nextCursorRef = useRef<string | null>(null)
 
-  // Tracks which supertile_id the current `posts` state belongs to, so
+  // Tracks which sector key the current `posts` state belongs to, so
   // a fetch response arriving after the user has already tapped a
   // different marker doesn't overwrite the wrong tile's list (a real
   // risk given fetches are async and taps can happen in quick succession).
@@ -134,7 +139,7 @@ export function TileDetailsModal({
     [localReactions],
   )
 
-  // ─── Post fetching (paginated, per-supertile) ────────────────────────
+  // ─── Post fetching (paginated, per-sector) ────────────────────────────
 
   const fetchTilePosts = useCallback(
     async (targetTile: SelectedTile, cursor?: string) => {
@@ -147,24 +152,25 @@ export function TileDetailsModal({
       setPostsError(null)
 
       try {
-        const params = new URLSearchParams({
-          groupingFactor: String(targetTile.groupingFactor),
-          limit: String(PAGE_SIZE),
+        const res = await fetch(`${API_URL}/api/posts/by-bounds`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
+          body: JSON.stringify({
+            ...targetTile.bounds,
+            cursor: cursor ?? null,
+            limit: PAGE_SIZE,
+            tags: selectedTags && selectedTags.length > 0 ? selectedTags : undefined,
+          }),
         })
-        if (cursor) params.set("after", cursor)
-
-        const res = await fetch(
-          `${API_URL}/api/posts/by-supertile/${encodeURIComponent(
-            targetTile.supertile_id,
-          )}?${params}`,
-          { headers: authHeaders },
-        )
         const data = await res.json()
 
         // If the user tapped a different marker while this request was
-        // in flight, drop the result — it belongs to a tile we're no
+        // in flight, drop the result — it belongs to a sector we're no
         // longer showing.
-        if (loadedForRef.current !== targetTile.supertile_id) return
+        if (loadedForRef.current !== targetTile.key) return
 
         if (data.success) {
           setPosts((prev) =>
@@ -175,17 +181,17 @@ export function TileDetailsModal({
           setPostsError(data.error || "Failed to load posts")
         }
       } catch {
-        if (loadedForRef.current === targetTile.supertile_id) {
+        if (loadedForRef.current === targetTile.key) {
           setPostsError("Could not connect to server")
         }
       } finally {
-        if (loadedForRef.current === targetTile.supertile_id) {
+        if (loadedForRef.current === targetTile.key) {
           setIsLoadingPosts(false)
           setIsLoadingMore(false)
         }
       }
     },
-    [authHeaders],
+    [authHeaders, selectedTags],
   )
 
   const handleLoadMore = useCallback(() => {
@@ -193,19 +199,19 @@ export function TileDetailsModal({
     fetchTilePosts(tile, nextCursorRef.current)
   }, [tile, isLoadingMore, fetchTilePosts])
 
-  // Fetch the first page whenever a new supertile is selected. Keyed on
-  // supertile_id (not the whole tile object) so re-renders that produce
-  // a new-but-equivalent tile reference don't trigger a redundant fetch.
+  // Fetch the first page whenever a new sector is selected. Keyed on
+  // key (not the whole tile object) so re-renders that produce a
+  // new-but-equivalent tile reference don't trigger a redundant fetch.
   useEffect(() => {
     if (!visible || !tile) return
-    if (loadedForRef.current === tile.supertile_id) return
+    if (loadedForRef.current === tile.key) return
 
-    loadedForRef.current = tile.supertile_id
+    loadedForRef.current = tile.key
     setPosts([])
     nextCursorRef.current = null
     fetchTilePosts(tile)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, tile?.supertile_id])
+  }, [visible, tile?.key])
 
   // ─── Handlers ───────────────────────────────────────────────────────
 
@@ -583,7 +589,7 @@ export function TileDetailsModal({
   // `posts`/set isLoadingPosts. Without this, that first render could
   // briefly show the *previous* tile's already-loaded posts instead of
   // a loading state — effects run after commit, not during it.
-  const isSwitchingTiles = loadedForRef.current !== tile.supertile_id
+  const isSwitchingTiles = loadedForRef.current !== tile.key
   const showLoading = isLoadingPosts || isSwitchingTiles
 
   // If all loaded posts were deleted and there's nothing left to page

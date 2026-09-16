@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify"
 import { db } from "../db/index.js"
-import { getTileId } from "../db/tiles.js"
 
 const SEED_TAGS = [
   ["#food", "#restaurant"],
@@ -150,8 +149,6 @@ export async function seedRoutes(fastify: FastifyInstance) {
       // Insert into database
       const insertedPosts = []
       for (const post of seedPosts) {
-        const tileId = getTileId(post.latitude, post.longitude)
-
         const inserted = await db
           .insertInto("posts")
           .values({
@@ -161,7 +158,6 @@ export async function seedRoutes(fastify: FastifyInstance) {
             photo_url: null,
             latitude: post.latitude,
             longitude: post.longitude,
-            tile_id: tileId,
             tags: post.tags,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -248,17 +244,9 @@ export async function seedRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // Get post count by tile
+  // Get total post count
   fastify.get("/seed/stats", async (request, reply) => {
     try {
-      const stats = await db
-        .selectFrom("posts")
-        .select((eb) => ["tile_id", eb.fn.count("id").as("count")])
-        .groupBy("tile_id")
-        .orderBy("count", "desc")
-        .limit(20)
-        .execute()
-
       const totalPosts = await db
         .selectFrom("posts")
         .select((eb) => eb.fn.count("id").as("total"))
@@ -267,10 +255,6 @@ export async function seedRoutes(fastify: FastifyInstance) {
       return {
         success: true,
         totalPosts: Number(totalPosts?.total ?? 0),
-        topTiles: stats.map((s) => ({
-          tile_id: s.tile_id,
-          count: Number(s.count),
-        })),
       }
     } catch (error) {
       console.error("Error getting stats:", error)

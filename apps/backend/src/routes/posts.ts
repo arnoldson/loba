@@ -5,8 +5,6 @@ import { LocationQualityError } from "../utils/proximity.js"
 import type {
   CreatePostRequest,
   CreatePostResponse,
-  GetPostsRequest,
-  GetPostsResponse,
   GetMyPostsResponse,
 } from "@loba/shared"
 
@@ -99,35 +97,6 @@ export async function postRoutes(fastify: FastifyInstance) {
         reply.code(status).send({
           success: false,
           error: message,
-        })
-      }
-    },
-  )
-
-  // ─── Get posts by tile IDs (public, optional auth for is_own flag) ──
-
-  fastify.post<{ Body: GetPostsRequest; Reply: GetPostsResponse }>(
-    "/posts/by-tiles",
-    { preHandler: [optionalAuth] },
-    async (request, reply) => {
-      try {
-        const { tile_ids, limit } = request.body
-        const posts = await postService.getPostsByTiles(
-          tile_ids,
-          limit,
-          request.userId,
-        )
-
-        reply.send({
-          success: true,
-          posts,
-        })
-      } catch (error) {
-        reply.code(500).send({
-          success: false,
-          posts: [],
-          error:
-            error instanceof Error ? error.message : "Failed to fetch posts",
         })
       }
     },

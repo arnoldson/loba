@@ -1,64 +1,61 @@
 /**
- * Server-side supertile grid math for the density query.
+ * Server-side sector grid math for the density query (#63).
  *
- * Previously this logic (or approximations of it) existed in three
- * places at once: the client computed its own groupingFactor and grid
- * boundaries to decide what to display, the server independently
- * re-derived grid identity to decide what to group posts by, and the
- * two had to be kept in agreement by hand across two codebases --
- * which is exactly how #52, #58, and #58's follow-up all happened. Now
- * there is exactly one implementation, here. The client sends raw
- * viewport parameters (latitude, longitude, deltas, viewport width) and
- * displays whatever grid rectangle + sparse cell list this returns --
- * it does no geographic math of its own for this anymore.
+ * Grid IDENTITY (which sector a point belongs to) is now computed
+ * purely relative to the CURRENT request's own (snapped) viewport --
+ * there is no more persistent, world-anchored tile/supertile grid. A
+ * previous version of this file anchored longitude's cos() correction
+ * to a fixed GRID_REFERENCE_LATITUDE=0 (the equator), which meant real-
+ * world cell width was computed correctly only at the equator -- at
+ * Seoul (~37.5N) this made cells non-square in real meters and produced
+ * overlapping markers (#63, superseding the deferred #60). Cells are
+ * now sized using the viewport's own latitude, eliminating that
+ * distortion at the root instead of compensating for it with a
+ * "better" fixed reference (which would just be wrong somewhere else).
+ *
+ * Since there's no persistent identity, a sector's row/col numbering is
+ * only meaningful within one response -- see computeSectorGeometry's
+ * snapBounds step for how repeat/overlapping requests still agree on
+ * sector boundaries (needed for the client's DensityCache and for
+ * marker position/key stability -- see apps/mobile/utils/postGrouping.ts).
  */
 
 const TILE_SIZE_METERS = 3
+const METERS_PER_DEGREE = 111320
 
-// Must match apps/mobile/components/TileMarker.tsx's marker size --
-// this is the on-screen pixel target the grouping factor is chosen to
-// hit. See apps/mobile/utils/tiles.ts's own copy of this constant
-// (kept there too, for the client's zoom-lock feature, which still
-// needs to reason about on-screen marker size independently -- see
-// that file's comments) for the full rationale.
+// Must match apps/mobile/components/TileMarker.tsx's marker size -- the
+// on-screen pixel target the grouping factor is chosen to hit.
 const MARKER_SIZE_PX = 36
 
 const MIN_GROUPING_FACTOR = 1
 const MAX_GROUPING_FACTOR = 8_388_608
 
-// City-scale ceiling on real-world supertile size -- see issue #53.
-// Must match apps/mobile/utils/tiles.ts's CITY_CAP_GROUPING_FACTOR
-// exactly. The client separately enforces a max zoom-out (its own
-// getMaxAllowedLongitudeDelta) as a UX snap-back so the camera never
-// even reaches a delta that would need this cap to bind server-side --
-// but this cap still exists here independently, as the actual
-// data-level invariant: even if the client's zoom-lock were ever
-// bypassed or wrong, this clamp is what actually prevents the grid
-// from growing without bound.
+// City-scale ceiling on real-world sector size -- see issue #53. Must
+// match apps/mobile/utils/tiles.ts's CITY_CAP_GROUPING_FACTOR exactly --
+// the client's own zoom-lock (getMaxAllowedLongitudeDelta) predicts
+// where this cap engages so it can snap back instantly on a zoom
+// gesture, without a network round-trip.
 const CITY_CAP_GROUPING_FACTOR = 4096
 
-// Fixed reference latitude for the longitude term's cos() correction in
-// GRID IDENTITY math -- which supertile a real-world point belongs to.
-// See the equivalent constant's comment in apps/mobile/utils/tiles.ts
-// for the full history (corner-inversion, then client/backend
-// mismatch, then cross-fetch drift -- all fixed by moving to one fixed
-// constant). The client no longer has its own copy of this at all now
-// that it doesn't compute grid identity -- this is the only place it
-// needs to exist.
-export const GRID_REFERENCE_LATITUDE = 0
+// How much coarser the snap grid is than a sector cell -- see
+// computeSectorGeometry. Larger means fewer distinct snapped bboxes
+// (better cache/key stability across small pans) at the cost of a
+// larger query envelope per request.
+const SNAP_STEP_MULTIPLIER = 4
+
+export interface Bounds {
+  minLat: number
+  maxLat: number
+  minLng: number
+  maxLng: number
+}
 
 /**
- * Choose a groupingFactor so supertiles render at roughly
- * MARKER_SIZE_PX on screen, given the viewport's real dimensions.
- * Direct port of apps/mobile/utils/tiles.ts's getGroupingFactor -- see
- * that function's comments for the full derivation (metersPerPixel
- * from longitudeDelta directly, power-of-2 rounding, the two-tier
- * clamp). Must stay in sync with the client's copy: not because the
- * client still computes this itself (it doesn't, anymore), but because
- * the client's zoom-lock (getMaxAllowedLongitudeDelta) independently
- * predicts where CITY_CAP_GROUPING_FACTOR will engage, and that
- * prediction is only correct if both sides agree on how groupingFactor
- * is chosen.
+ * Choose a groupingFactor so sectors render at roughly MARKER_SIZE_PX
+ * on screen, given the viewport's real dimensions. Already correctly
+ * uses the request's own latitude for the meters-per-pixel conversion
+ * -- this part was never the source of #63's distortion, only grid
+ * identity (computeSectorGeometry below) was.
  */
 export function getGroupingFactor(
   longitudeDelta: number,
@@ -66,11 +63,11 @@ export function getGroupingFactor(
   viewportWidthPx: number,
 ): number {
   const metersPerPixel =
-    (longitudeDelta * 111320 * Math.cos((latitude * Math.PI) / 180)) /
+    (longitudeDelta * METERS_PER_DEGREE * Math.cos((latitude * Math.PI) / 180)) /
     viewportWidthPx
 
-  const desiredSupertileMeters = MARKER_SIZE_PX * metersPerPixel
-  const rawFactor = desiredSupertileMeters / TILE_SIZE_METERS
+  const desiredSectorMeters = MARKER_SIZE_PX * metersPerPixel
+  const rawFactor = desiredSectorMeters / TILE_SIZE_METERS
 
   const factor = Math.pow(
     2,
@@ -84,81 +81,140 @@ export function getGroupingFactor(
   )
 }
 
-export interface GridRect {
+/**
+ * Snap a raw viewport bbox outward to a coarser, latitude-INDEPENDENT
+ * grid before any sector geometry is derived from it -- the hard
+ * requirement from #63: overlapping/near-identical requests (a small
+ * pan, a zoom in/out) must agree on sector boundaries, or markers
+ * jitter and the client's DensityCache keys thrash for no reason.
+ *
+ * Deliberately no cos() term on either axis here (unlike the real
+ * per-cell geometry below, which does need one) -- this stage only
+ * picks reproducible anchor lines, so two requests at slightly
+ * different latitudes but the same raw longitude corners must still
+ * snap identically. Introducing latitude here would reintroduce the
+ * exact "grid identity depends on which of two nearby latitudes you
+ * used" instability this function exists to prevent.
+ */
+function snapBounds(raw: Bounds, groupingFactor: number): Bounds {
+  const stepDeg =
+    (SNAP_STEP_MULTIPLIER * groupingFactor * TILE_SIZE_METERS) /
+    METERS_PER_DEGREE
+
+  return {
+    minLat: Math.floor(raw.minLat / stepDeg) * stepDeg,
+    maxLat: Math.ceil(raw.maxLat / stepDeg) * stepDeg,
+    minLng: Math.floor(raw.minLng / stepDeg) * stepDeg,
+    maxLng: Math.ceil(raw.maxLng / stepDeg) * stepDeg,
+  }
+}
+
+export interface SectorGeometry {
   groupingFactor: number
-  // World-anchored supertile-unit coordinates of the grid's
-  // south-west corner cell -- row 0 / col 0 in the M x N grid is this
-  // cell; row increases northward, col increases eastward.
-  gridOrigin: { latTile: number; lngTile: number }
-  gridWidth: number
-  gridHeight: number
-  // Exact real-world rectangle spanned by the M x N grid -- snapped
-  // outward to the grid's own boundaries (no partial edge cells),
-  // matching the old client-side snapBoundsToGrid's behavior. The
-  // client interpolates a cell's center directly within this rectangle
-  // using (row, col, gridWidth, gridHeight) -- plain proportional math,
-  // no cos() needed, because GRID_REFERENCE_LATITUDE being a fixed
-  // constant makes both axes linear across the whole rectangle.
-  bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number }
+  cellMeters: number
+  // cos(refLat) for the longitude axis, refLat taken from the SNAPPED
+  // bbox's center -- fixed per-request once snapping has happened, so
+  // both axes stay linear across the whole geometry (cellBounds/
+  // cellCenter can invert it with plain arithmetic).
+  cosRef: number
+  xMin: number
+  yMin: number
+  numCols: number
+  numRows: number
+  // Exact real-world rectangle the geometry covers, grown outward to a
+  // whole number of cells on the longitude axis (the snap step is
+  // already an exact multiple of cellMeters on the latitude axis, see
+  // below) -- this is what the SQL query's bounding envelope uses.
+  queryBounds: Bounds
 }
 
 /**
- * Compute the full world-anchored supertile grid rectangle covering a
- * viewport -- the server-side equivalent of the old client
- * getVisibleSupertileIds + snapBoundsToGrid combined.
+ * Compute the sector grid geometry covering a viewport -- the
+ * per-request equivalent of the old world-anchored computeGridRect,
+ * but with no persistent identity and no fixed reference latitude.
  */
-export function computeGridRect(
+export function computeSectorGeometry(
   latitude: number,
   longitude: number,
   latitudeDelta: number,
   longitudeDelta: number,
   viewportWidthPx: number,
-): GridRect {
+): SectorGeometry {
   const groupingFactor = getGroupingFactor(
     longitudeDelta,
     latitude,
     viewportWidthPx,
   )
+  const cellMeters = groupingFactor * TILE_SIZE_METERS
 
-  const minLat = latitude - latitudeDelta / 2
-  const maxLat = latitude + latitudeDelta / 2
-  const minLng = longitude - longitudeDelta / 2
-  const maxLng = longitude + longitudeDelta / 2
+  const rawBounds: Bounds = {
+    minLat: latitude - latitudeDelta / 2,
+    maxLat: latitude + latitudeDelta / 2,
+    minLng: longitude - longitudeDelta / 2,
+    maxLng: longitude + longitudeDelta / 2,
+  }
+  const snapped = snapBounds(rawBounds, groupingFactor)
 
-  const cosRef = Math.cos((GRID_REFERENCE_LATITUDE * Math.PI) / 180)
+  const refLat = (snapped.minLat + snapped.maxLat) / 2
+  const cosRef = Math.cos((refLat * Math.PI) / 180)
 
-  const minLatTile = Math.floor((minLat * 111320) / TILE_SIZE_METERS)
-  const maxLatTile = Math.floor((maxLat * 111320) / TILE_SIZE_METERS)
-  const minLngTile = Math.floor((minLng * 111320 * cosRef) / TILE_SIZE_METERS)
-  const maxLngTile = Math.floor((maxLng * 111320 * cosRef) / TILE_SIZE_METERS)
+  const yMin = snapped.minLat * METERS_PER_DEGREE
+  const yMax = snapped.maxLat * METERS_PER_DEGREE
+  const xMin = snapped.minLng * METERS_PER_DEGREE * cosRef
+  const xMax = snapped.maxLng * METERS_PER_DEGREE * cosRef
 
-  const minSuperLat = Math.floor(minLatTile / groupingFactor)
-  const maxSuperLat = Math.floor(maxLatTile / groupingFactor)
-  const minSuperLng = Math.floor(minLngTile / groupingFactor)
-  const maxSuperLng = Math.floor(maxLngTile / groupingFactor)
+  // Exact by construction: snapBounds's stepDeg is
+  // (SNAP_STEP_MULTIPLIER * cellMeters / METERS_PER_DEGREE), so the
+  // snapped lat span is always an integer multiple of
+  // SNAP_STEP_MULTIPLIER * cellMeters in real meters.
+  const numRows = Math.round((yMax - yMin) / cellMeters)
 
-  const gridOrigin = { latTile: minSuperLat, lngTile: minSuperLng }
-  const gridWidth = maxSuperLng - minSuperLng + 1
-  const gridHeight = maxSuperLat - minSuperLat + 1
-
-  const boundMinLat = (minSuperLat * groupingFactor * TILE_SIZE_METERS) / 111320
-  const boundMaxLat =
-    ((maxSuperLat + 1) * groupingFactor * TILE_SIZE_METERS) / 111320
-  const boundMinLng =
-    (minSuperLng * groupingFactor * TILE_SIZE_METERS) / (111320 * cosRef)
-  const boundMaxLng =
-    ((maxSuperLng + 1) * groupingFactor * TILE_SIZE_METERS) / (111320 * cosRef)
+  // Not generally exact on this axis -- cosRef compresses it -- so grow
+  // the max edge outward rather than truncate a partial edge cell.
+  const numCols = Math.ceil((xMax - xMin) / cellMeters)
+  const grownXMax = xMin + numCols * cellMeters
 
   return {
     groupingFactor,
-    gridOrigin,
-    gridWidth,
-    gridHeight,
-    bounds: {
-      minLat: boundMinLat,
-      maxLat: boundMaxLat,
-      minLng: boundMinLng,
-      maxLng: boundMaxLng,
+    cellMeters,
+    cosRef,
+    xMin,
+    yMin,
+    numCols,
+    numRows,
+    queryBounds: {
+      minLat: snapped.minLat,
+      maxLat: snapped.maxLat,
+      minLng: snapped.minLng,
+      maxLng: grownXMax / (METERS_PER_DEGREE * cosRef),
     },
+  }
+}
+
+export function cellBounds(
+  geom: SectorGeometry,
+  row: number,
+  col: number,
+): Bounds {
+  return {
+    minLat: (geom.yMin + row * geom.cellMeters) / METERS_PER_DEGREE,
+    maxLat: (geom.yMin + (row + 1) * geom.cellMeters) / METERS_PER_DEGREE,
+    minLng:
+      (geom.xMin + col * geom.cellMeters) / (METERS_PER_DEGREE * geom.cosRef),
+    maxLng:
+      (geom.xMin + (col + 1) * geom.cellMeters) /
+      (METERS_PER_DEGREE * geom.cosRef),
+  }
+}
+
+export function cellCenter(
+  geom: SectorGeometry,
+  row: number,
+  col: number,
+): { latitude: number; longitude: number } {
+  const b = cellBounds(geom, row, col)
+  return {
+    latitude: (b.minLat + b.maxLat) / 2,
+    longitude: (b.minLng + b.maxLng) / 2,
   }
 }

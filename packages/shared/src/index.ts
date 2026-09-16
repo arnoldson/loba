@@ -7,7 +7,6 @@ export type Post = {
   photo_url: string | null
   latitude: number
   longitude: number
-  tile_id: string
   tags: string[]
   comment_count: number
   upvote_count: number
@@ -92,9 +91,14 @@ export type CreatePostRequest = {
   photo_url?: string
 }
 
-export type GetPostsRequest = {
-  tile_ids: string[]
+export type PostsByBoundsRequest = {
+  minLat: number
+  maxLat: number
+  minLng: number
+  maxLng: number
+  cursor?: string | null
   limit?: number
+  tags?: string[]
 }
 
 // latitude/longitude/location metadata are optional because a comment
@@ -130,9 +134,25 @@ export type CreatePostResponse = {
   error?: string
 }
 
-export type GetPostsResponse = {
+export type PostsByBoundsResponse = {
   success: boolean
   posts: PublicPost[]
+  nextCursor: string | null
+  error?: string
+}
+
+export type DensitySector = {
+  key: string
+  count: number
+  center: { latitude: number; longitude: number }
+  bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number }
+}
+
+export type PostsDensityResponse = {
+  success: boolean
+  groupingFactor: number
+  sectors: DensitySector[]
+  filtered_by_tags: string[] | null
   error?: string
 }
 

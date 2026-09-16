@@ -96,16 +96,14 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * POST /api/posts/density-in-bounds
-   * Get post counts as a sparse world-anchored M x N supertile grid
-   * covering the client's viewport. Client sends raw viewport
+   * Get post counts as a set of viewport-relative sectors (#63) --
+   * no persistent world-anchored grid. Client sends raw viewport
    * parameters only (latitude, longitude, deltas, viewport width) --
-   * the server determines grid size/position/groupingFactor entirely;
-   * see computeGridRect in utils/grouping.ts. Returns the grid's
-   * metadata (groupingFactor, gridOrigin, gridWidth/Height, exact
-   * bounds) plus only non-empty cells as {row, col, count} -- no post
-   * content, for cheap map-view rendering. The client interpolates each
-   * cell's center directly within `bounds` using (row, col,
-   * gridWidth, gridHeight) -- plain proportional math, no geographic
+   * the server determines sector size/position entirely; see
+   * computeSectorGeometry in utils/grouping.ts. Returns groupingFactor
+   * plus only non-empty sectors, each as its own {key, count, center,
+   * bounds} -- no post content, for cheap map-view rendering. The
+   * client displays each sector directly; it does no geographic
    * computation of its own.
    */
   fastify.post(
@@ -141,14 +139,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        const {
-          groupingFactor,
-          gridOrigin,
-          gridWidth,
-          gridHeight,
-          bounds,
-          cells,
-        } = await postService.getPostDensity(
+        const { groupingFactor, sectors } = await postService.getPostDensity(
           latitude,
           longitude,
           latitudeDelta,
@@ -160,11 +151,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         return {
           success: true,
           groupingFactor,
-          gridOrigin,
-          gridWidth,
-          gridHeight,
-          bounds,
-          cells,
+          sectors,
           filtered_by_tags: cleanTags || null,
         }
       } catch (error) {
@@ -179,61 +166,67 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
   )
 
   /**
-   * GET /api/posts/by-supertile/:supertileId
-   * Paginated posts for a single supertile — backs TileDetailsModal.
-   * Cursor-based via ?after=<createdAt>,<id> so results stay stable
-   * under TTL churn while a user is scrolling.
+   * POST /api/posts/by-bounds
+   * Paginated posts within a sector's own sub-bbox — backs
+   * TileDetailsModal. Takes the sector's bounds directly rather than a
+   * symbolic ID (#63: there's no persistent sector identity to look
+   * up, so a tap snapshots its own bbox instead). Cursor-based via
+   * `cursor` so results stay stable under TTL churn while a user is
+   * scrolling.
    */
-  fastify.get(
-    "/api/posts/by-supertile/:supertileId",
+  fastify.post(
+    "/api/posts/by-bounds",
     { preHandler: [optionalAuth] },
     async (request, reply) => {
-      const { supertileId } = request.params as { supertileId: string }
-      const { groupingFactor, after, limit } = request.query as {
-        groupingFactor?: string
-        after?: string
-        limit?: string
-      }
+      const { minLat, maxLat, minLng, maxLng, cursor, limit, tags } =
+        request.body as {
+          minLat?: number
+          maxLat?: number
+          minLng?: number
+          maxLng?: number
+          cursor?: string | null
+          limit?: number
+          tags?: string[]
+        }
 
-      if (!supertileId || !/^-?\d+:-?\d+$/.test(supertileId)) {
-        return reply.status(400).send({
-          success: false,
-          error: "Invalid supertileId — expected format 'latTile:lngTile'",
-        })
-      }
-
-      const parsedGroupingFactor = Number(groupingFactor)
       if (
-        !Number.isInteger(parsedGroupingFactor) ||
-        parsedGroupingFactor <= 0
+        minLat == null ||
+        maxLat == null ||
+        minLng == null ||
+        maxLng == null
       ) {
         return reply.status(400).send({
           success: false,
-          error: "Missing or invalid groupingFactor",
+          error: "Missing required bounds: minLat, maxLat, minLng, maxLng",
         })
       }
 
-      let cursor: { createdAt: string; id: string } | undefined
-      if (after) {
-        const [createdAt, id] = after.split(",")
+      let parsedCursor: { createdAt: string; id: string } | undefined
+      if (cursor) {
+        const [createdAt, id] = cursor.split(",")
         if (!createdAt || !id) {
           return reply.status(400).send({
             success: false,
-            error: "Invalid 'after' cursor — expected '<createdAt>,<id>'",
+            error: "Invalid 'cursor' — expected '<createdAt>,<id>'",
           })
         }
-        cursor = { createdAt, id }
+        parsedCursor = { createdAt, id }
       }
+
+      const cleanTags =
+        tags && Array.isArray(tags) && tags.length > 0
+          ? tags.filter((t) => typeof t === "string" && t.trim().length > 0)
+          : undefined
 
       const parsedLimit = Math.min(Number(limit) || 25, 50)
 
       try {
-        const { posts, nextCursor } = await postService.getPostsInSupertile(
-          supertileId,
-          parsedGroupingFactor,
+        const { posts, nextCursor } = await postService.getPostsInSector(
+          { minLat, maxLat, minLng, maxLng },
           request.userId,
-          cursor,
+          parsedCursor,
           parsedLimit,
+          cleanTags,
         )
 
         return {
@@ -247,7 +240,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error)
         return reply.status(500).send({
           success: false,
-          error: "Failed to fetch supertile posts",
+          error: "Failed to fetch posts in bounds",
           details: error instanceof Error ? error.message : "Unknown error",
         })
       }
