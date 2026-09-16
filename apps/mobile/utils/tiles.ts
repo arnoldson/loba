@@ -1,12 +1,11 @@
 /**
  * Client-side tile constants -- now used for exactly one thing: the
- * app's max zoom-out lock (#53). All other tile/grid math (grouping
- * factor selection, grid identity, supertile boundaries, marker
- * centers) moved server-side -- see apps/backend/src/utils/grouping.ts
- * and issue #58's follow-up ("move rendering/clustering logic
- * server-side"). The client no longer computes any of that; it sends
- * raw viewport parameters and displays whatever grid rectangle + cell
- * list the density endpoint returns.
+ * app's max zoom-out lock (#53). All other grid math (grouping factor
+ * selection, sector geometry, marker centers) lives server-side -- see
+ * apps/backend/src/utils/grouping.ts. There's no persistent world-
+ * anchored grid at all anymore (#63): the client no longer computes any
+ * of that; it sends raw viewport parameters and displays whatever
+ * sectors the density endpoint returns.
  */
 
 // Must match TILE_SIZE_METERS in apps/backend/src/utils/grouping.ts --

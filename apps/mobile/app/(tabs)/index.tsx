@@ -19,12 +19,7 @@ import {
 import { CreatePostModal } from "@/components/CreatePostModal"
 import { TagFilterBar, type PopularTag } from "@/components/TagFilterBar"
 import { getZoomLevel, getMaxAllowedLongitudeDelta } from "@/utils/tiles"
-import {
-  DensityCache,
-  type DensityEntry,
-  type Bounds,
-  interpolateCellCenter,
-} from "@/utils/postGrouping"
+import { DensityCache, type DensityEntry, type Bounds } from "@/utils/postGrouping"
 import { getBoundingBox } from "@/utils/mapBounds"
 import { perfMonitor } from "@/utils/diagnostics"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
@@ -84,14 +79,10 @@ export default function HomeScreen() {
   // instead of raw posts (see /api/posts/density-in-bounds).
   const densityCache = useRef(new DensityCache()).current
 
-  // The supertiles currently visible on screen — derived from the cache.
-  const [visibleSupertiles, setVisibleSupertiles] = useState<
-    {
-      supertile_id: string
-      count: number
-      center: { latitude: number; longitude: number }
-    }[]
-  >([])
+  // The sectors currently visible on screen — derived from the cache.
+  const [visibleSupertiles, setVisibleSupertiles] = useState<DensityEntry[]>(
+    [],
+  )
 
   // Whether newly-added markers should still be tracked for re-snapshotting.
   // iOS can take a custom marker's view snapshot before its first layout pass
@@ -106,18 +97,6 @@ export default function HomeScreen() {
 
   // Track the last region so we can re-fetch when tags change or posts are deleted
   const lastRegion = useRef<Region | null>(null)
-
-  // Grid metadata from the most recent successful density fetch --
-  // bounds/gridWidth/gridHeight, needed for the dev-only grid outline
-  // overlay to draw the exact same M x N rectangle the server returned,
-  // without the client re-deriving it. Also doubles as the source of
-  // the "current visible IDs" set used for cache eviction.
-  const lastGrid = useRef<{
-    bounds: Bounds
-    gridWidth: number
-    gridHeight: number
-    gridOrigin: { latTile: number; lngTile: number }
-  } | null>(null)
 
   // Modal visibility
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false)
@@ -234,59 +213,32 @@ export default function HomeScreen() {
 
         if (data.success) {
           const fetchDuration = Date.now() - fetchStartTime
-          const {
-            groupingFactor,
-            gridOrigin,
-            gridWidth,
-            gridHeight,
-            bounds,
-            cells,
-          } = data as {
+          const { groupingFactor, sectors } = data as {
             groupingFactor: number
-            gridOrigin: { latTile: number; lngTile: number }
-            gridWidth: number
-            gridHeight: number
-            bounds: Bounds
-            cells: { row: number; col: number; count: number }[]
+            sectors: DensityEntry[]
           }
 
           console.log(
-            `✅ Fetched ${cells.length} non-empty cells of a ${gridWidth}x${gridHeight} grid ` +
+            `✅ Fetched ${sectors.length} non-empty sectors ` +
               `(grouping ${groupingFactor}, ${fetchDuration}ms)${hasTags ? ` (filtered by: ${tags!.join(", ")})` : ""}`,
           )
-          perfMonitor.logFetch(fetchDuration, cells.length)
+          perfMonitor.logFetch(fetchDuration, sectors.length)
 
-          // Interpolate each cell's center within the server's exact
-          // grid rectangle -- plain proportional math, no cos(). This is
-          // the only place the client computes a geographic position at
-          // all now.
-          const entries: DensityEntry[] = cells.map((c) => ({
-            supertile_id: `${gridOrigin.latTile + c.row}:${gridOrigin.lngTile + c.col}`,
-            count: c.count,
-            center: interpolateCellCenter(
-              c.row,
-              c.col,
-              gridWidth,
-              gridHeight,
-              bounds,
-            ),
-          }))
-          const visibleIds = new Set(entries.map((e) => e.supertile_id))
+          const visibleKeys = new Set(sectors.map((s) => s.key))
 
           if (hasTags) {
             densityCache.clear()
           }
-          densityCache.addDensity(entries, groupingFactor)
-          lastGrid.current = { bounds, gridWidth, gridHeight, gridOrigin }
+          densityCache.addDensity(sectors, groupingFactor)
 
-          setVisibleSupertiles(densityCache.getVisible(visibleIds))
+          setVisibleSupertiles(densityCache.getVisible(visibleKeys))
 
           // No buffer anymore -- keep exactly what the latest fetch
           // covers. The 3x-buffer eviction margin existed to support the
           // cache-hit-skip-fetch optimization on small pans, which no
           // longer exists (every pan re-fetches), so there's nothing
           // left for the buffer to protect against a redundant fetch.
-          densityCache.evictOutside(visibleIds)
+          densityCache.evictOutside(visibleKeys)
 
           console.log(`💾 Density cache: ${densityCache.size} tiles`)
         }
@@ -529,14 +481,14 @@ export default function HomeScreen() {
   }, [location, fetchVisiblePosts, fetchPopularTags, selectedTags])
 
   // Called by TileDetailsModal after a post is deleted. Invalidates just
-  // the affected supertile's cached count rather than the whole cache —
-  // the modal knows which supertile it's showing, so this stays a
+  // the affected sector's cached count rather than the whole cache —
+  // the modal knows which sector it's showing, so this stays a
   // cheap, targeted invalidation instead of a full re-fetch of everything
   // visible.
   const handlePostDeleted = useCallback(
     (_postId: string) => {
       if (selectedTile) {
-        densityCache.invalidate(selectedTile.supertile_id)
+        densityCache.invalidate(selectedTile.key)
       }
       const region = lastRegion.current
       if (region) {
@@ -546,12 +498,8 @@ export default function HomeScreen() {
     [densityCache, fetchVisiblePosts, selectedTags, selectedTile],
   )
 
-  const handleTilePress = (tile: {
-    supertile_id: string
-    count: number
-    center: { latitude: number; longitude: number }
-  }) => {
-    setSelectedTile({ ...tile, groupingFactor })
+  const handleTilePress = (tile: DensityEntry) => {
+    setSelectedTile(tile)
     setIsTileModalVisible(true)
   }
 
@@ -578,43 +526,21 @@ export default function HomeScreen() {
   // doesn't matter.
   const groupingFactor = densityCache.groupingFactor ?? 1
 
-  // Dev-only grid outline overlay data: the exact M x N rectangle from
-  // the most recent fetch (lastGrid), covering every cell -- not just
-  // populated ones (that made it look like the grid didn't cover the
-  // viewport at all, it just meant every empty cell was silently
-  // skipped). Drawn directly from the server's own bounds/gridWidth/
-  // gridHeight now, with no client-side grid computation at all.
+  // Dev-only sector outline overlay data: each visible sector's own
+  // bounds, straight from the server (#63 -- there's no outer grid
+  // rectangle to reconstruct anymore, and only non-empty sectors are
+  // ever known to the client, so this only draws populated sectors,
+  // unlike the old grid overlay which also drew empty cells).
   const gridOutlineCells = useMemo(() => {
-    if (!__DEV__ || !showGridOutline || !lastGrid.current) return []
-    const { bounds, gridWidth, gridHeight } = lastGrid.current
-    // Safety cap, matching MAX_MARKERS's spirit -- the #53 zoom lock
-    // should keep grids well under this in normal use, but dev-only
-    // tooling shouldn't be able to freeze the UI if that's ever wrong.
-    if (gridWidth * gridHeight > 500) {
+    if (!__DEV__ || !showGridOutline) return []
+    // Safety cap, matching MAX_MARKERS's spirit.
+    if (visibleSupertiles.length > 500) {
       console.warn(
-        `⚠️  Grid outline skipped -- ${gridWidth}x${gridHeight} is too large to render`,
+        `⚠️  Sector outline skipped -- ${visibleSupertiles.length} sectors is too many to render`,
       )
       return []
     }
-    const latStep = (bounds.maxLat - bounds.minLat) / gridHeight
-    const lngStep = (bounds.maxLng - bounds.minLng) / gridWidth
-    const cells: { row: number; col: number; bounds: Bounds }[] = []
-    for (let row = 0; row < gridHeight; row++) {
-      for (let col = 0; col < gridWidth; col++) {
-        cells.push({
-          row,
-          col,
-          bounds: {
-            minLat: bounds.minLat + row * latStep,
-            maxLat: bounds.minLat + (row + 1) * latStep,
-            minLng: bounds.minLng + col * lngStep,
-            maxLng: bounds.minLng + (col + 1) * lngStep,
-          },
-        })
-      }
-    }
-    return cells
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return visibleSupertiles.map((s) => ({ key: s.key, bounds: s.bounds }))
   }, [showGridOutline, visibleSupertiles])
 
   const supertiles = useMemo(() => {
@@ -670,29 +596,23 @@ export default function HomeScreen() {
           onRegionChange={handleRegionChange}
           onRegionChangeComplete={handleRegionChangeComplete}
         >
-          {supertiles.map((tile) => {
-            const uniqueKey = `g${groupingFactor}-${tile.supertile_id}`
-            return (
-              <Marker
-                key={uniqueKey}
-                coordinate={tile.center}
-                onPress={() => handleTilePress(tile)}
-                tracksViewChanges={!markersReady}
-                zIndex={1}
-              >
-                <TileMarker
-                  count={tile.count}
-                  groupingFactor={groupingFactor}
-                />
-              </Marker>
-            )
-          })}
+          {supertiles.map((tile) => (
+            <Marker
+              key={tile.key}
+              coordinate={tile.center}
+              onPress={() => handleTilePress(tile)}
+              tracksViewChanges={!markersReady}
+              zIndex={1}
+            >
+              <TileMarker count={tile.count} groupingFactor={groupingFactor} />
+            </Marker>
+          ))}
 
           {__DEV__ &&
             showGridOutline &&
-            gridOutlineCells.map(({ row, col, bounds }) => (
+            gridOutlineCells.map(({ key, bounds }) => (
               <Polygon
-                key={`outline-${groupingFactor}-${row}-${col}`}
+                key={`outline-${key}`}
                 coordinates={[
                   { latitude: bounds.minLat, longitude: bounds.minLng },
                   { latitude: bounds.minLat, longitude: bounds.maxLng },
@@ -782,6 +702,7 @@ export default function HomeScreen() {
           onClose={() => setIsTileModalVisible(false)}
           authToken={session?.access_token ?? null}
           onPostDeleted={handlePostDeleted}
+          selectedTags={selectedTags}
           userLocation={
             location
               ? {

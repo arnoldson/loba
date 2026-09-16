@@ -18,15 +18,7 @@ export class ModerationService {
   ): Promise<void> {
     const post = await db
       .selectFrom("posts")
-      .select([
-        "id",
-        "content",
-        "photo_url",
-        "tags",
-        "user_id",
-        "tile_id",
-        "created_at",
-      ])
+      .select(["id", "content", "photo_url", "tags", "user_id", "created_at"])
       .where("id", "=", postId)
       .executeTakeFirst()
 
@@ -55,7 +47,6 @@ export class ModerationService {
           photo_url_snapshot: post.photo_url,
           tags_snapshot: post.tags,
           post_user_id_snapshot: post.user_id,
-          tile_id_snapshot: post.tile_id,
           post_created_at_snapshot: post.created_at,
         })
         .execute()

@@ -22,7 +22,6 @@ export interface PostsTable {
   photo_url: string | null
   latitude: number
   longitude: number
-  tile_id: string
   tags: string[]
   comment_count: Generated<number> // DEFAULT 0 in DB
   upvote_count: Generated<number> // DEFAULT 0 in DB
@@ -64,7 +63,6 @@ export interface PostReportsTable {
   photo_url_snapshot: string | null
   tags_snapshot: string[]
   post_user_id_snapshot: string
-  tile_id_snapshot: string
   post_created_at_snapshot: string
   status: Generated<"pending" | "reviewed"> // DEFAULT 'pending' in DB
   created_at: Generated<string>
