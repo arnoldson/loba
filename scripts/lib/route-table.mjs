@@ -1,10 +1,13 @@
 /**
- * Shared route-table extraction, used by both check-routes-snapshot.mjs
- * (CI, hard-fail) and pre-commit-route-check.mjs (local, interactive).
+ * Shared route-table extraction, used by check-routes.mjs (CI, hard-fail)
+ * and pre-commit-route-check.mjs (local, interactive).
  *
- * Both consume the exact same "METHOD /path" JSON array emitted by
- * index.ts's PRINT_ROUTES_AND_EXIT block, so there's one definition of
- * "what does the route table currently look like" shared by both.
+ * Both consume the exact same "METHOD /path" JSON array that index.ts
+ * always prints on boot (see the comment above its PRINT_ROUTES_AND_EXIT
+ * check), so there's one definition of "what does the route table
+ * currently look like" shared by both — whether that boot exits
+ * immediately (pure introspection) or keeps listening for real (a boot
+ * check-routes.mjs also uses to run HTTP-level checks against).
  */
 
 import { spawn } from "node:child_process"
@@ -13,6 +16,25 @@ import process from "node:process"
 const BOOT_TIMEOUT_MS = 15_000
 
 /**
+ * @param {string} output - accumulated stdout+stderr from a backend boot
+ * @returns {string[]} sorted array of "METHOD /path" strings
+ */
+export function parseRouteTable(output) {
+  const match = output.match(/<<<ROUTES_START>>>([\s\S]*?)<<<ROUTES_END>>>/)
+  if (!match) {
+    throw new Error(`Could not find route table markers in output. Full output:\n${output}`)
+  }
+  try {
+    return JSON.parse(match[1].trim())
+  } catch (err) {
+    throw new Error(`Route table output wasn't valid JSON: ${err.message}\nRaw: ${match[1]}`)
+  }
+}
+
+/**
+ * Boots the backend just to read its route table, then exits (never binds
+ * a port — see PRINT_ROUTES_AND_EXIT in index.ts).
+ *
  * @param {string} nodeEnv - "development" or "production"
  * @param {string} backendCwd - absolute path to apps/backend
  * @returns {Promise<string[]>} sorted array of "METHOD /path" strings
@@ -41,20 +63,10 @@ export async function getRouteTable(nodeEnv, backendCwd) {
 
     child.on("close", (code) => {
       clearTimeout(timer)
-      const match = output.match(/<<<ROUTES_START>>>([\s\S]*?)<<<ROUTES_END>>>/)
-      if (!match) {
-        reject(
-          new Error(
-            `Could not find route table markers in output (NODE_ENV=${nodeEnv}, exit code ${code}). ` +
-              `Full output:\n${output}`
-          )
-        )
-        return
-      }
       try {
-        resolve(JSON.parse(match[1].trim()))
+        resolve(parseRouteTable(output))
       } catch (err) {
-        reject(new Error(`Route table output wasn't valid JSON: ${err.message}\nRaw: ${match[1]}`))
+        reject(new Error(`${err.message} (NODE_ENV=${nodeEnv}, exit code ${code})`))
       }
     })
 

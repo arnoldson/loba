@@ -11,13 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check for backend changes
+      - name: Check for backend/route-check changes
         id: filter
         uses: dorny/paths-filter@v3
         with:
           filters: |
             backend:
               - 'apps/backend/**'
+              - 'scripts/**'
 
       - uses: actions/setup-node@v4
         if: steps.filter.outputs.backend == 'true'
@@ -29,15 +30,10 @@ jobs:
         if: steps.filter.outputs.backend == 'true'
         run: npm ci --workspace=@loba/backend
 
-      - name: Static gating check
+      - name: Route safety check
         if: steps.filter.outputs.backend == 'true'
         working-directory: apps/backend
-        run: node ../../scripts/check-dev-route-gating.mjs src/index.ts
-
-      - name: Runtime production-mode smoke test
-        if: steps.filter.outputs.backend == 'true'
-        working-directory: apps/backend
-        run: node ../../scripts/check-prod-routes.mjs
+        run: node ../../scripts/check-routes.mjs
         env:
           DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
           SUPABASE_URL: ${{ secrets.CI_SUPABASE_URL }}
