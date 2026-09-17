@@ -27,8 +27,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.filter.outputs.backend == 'true'
-        working-directory: apps/backend
-        run: npm ci
+        run: npm ci --workspace=@loba/backend
 
       - name: Static gating check
         if: steps.filter.outputs.backend == 'true'
