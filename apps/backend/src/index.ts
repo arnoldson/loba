@@ -114,14 +114,17 @@ await fastify.register(authStatusRoutes, { prefix: "/api" })
 await fastify.register(authLoginRoutes, { prefix: "/api" })
 await fastify.register(postsSpatialRoutes)
 
-// Escape hatch for scripts/lib/route-table.mjs: print the route table and
-// exit WITHOUT binding a port, so this can run even while a real dev
-// server is already listening on the same port.
+// Always print the route table on boot (see scripts/lib/route-table.mjs) so
+// a live server's own stdout can double as a route-table read — no separate
+// introspection process needed. PRINT_ROUTES_AND_EXIT additionally skips
+// binding a port, so it can run even while a real dev server is already
+// listening on the same port.
+const routes = [...new Set(routeTable)].sort()
+console.log("<<<ROUTES_START>>>")
+console.log(JSON.stringify(routes))
+console.log("<<<ROUTES_END>>>")
+
 if (process.env.PRINT_ROUTES_AND_EXIT === "true") {
-  const routes = [...new Set(routeTable)].sort()
-  console.log("<<<ROUTES_START>>>")
-  console.log(JSON.stringify(routes))
-  console.log("<<<ROUTES_END>>>")
   process.exit(0)
 }
 
