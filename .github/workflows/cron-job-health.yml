@@ -1,0 +1,35 @@
+# .github/workflows/cron-job-health.yml
+#
+# Alerting for the pg_cron archive + hard-delete jobs (#31). A failed run
+# fails this workflow, which triggers GitHub's built-in "scheduled workflow
+# failed" notification to repo watchers — no extra setup required. Set the
+# optional ALERT_WEBHOOK_URL secret (Slack-compatible incoming webhook) for
+# an additional notification channel.
+name: pg_cron Job Health Check
+
+on:
+  schedule:
+    # Every 30 min — catches archive-expired-posts (runs every 15 min)
+    # missing two runs in a row well before it becomes user-visible.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: # Manual trigger for testing
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --workspace=@loba/backend
+
+      - name: Check archive + hard-delete pg_cron jobs
+        run: node scripts/check-cron-jobs.mjs
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}

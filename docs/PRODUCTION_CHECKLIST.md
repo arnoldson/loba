@@ -30,6 +30,12 @@
 - [ ] Spatial indexes are confirmed with `EXPLAIN ANALYZE`
 - [ ] Archive cron job is running (pg_cron or equivalent — not setInterval)
 - [ ] Hard-delete job is set up for posts archived >30 days
+- [ ] `PROD_DATABASE_URL` secret is set on GitHub so `cron-job-health.yml`
+      can reach the production DB — without it, every scheduled run fails
+      immediately on a connection error, which still alerts but gives a
+      useless message. Optionally set `ALERT_WEBHOOK_URL` (Slack-compatible
+      incoming webhook) for a second notification channel beyond GitHub's
+      own scheduled-workflow-failure email.
 
 ## 🔐 Authentication
 

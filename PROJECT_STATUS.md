@@ -53,6 +53,7 @@ Posts are anchored to 3m×3m geographic tiles, displayed on an interactive map w
 - ✅ CI workflow (`dev-route-safety.yml`) — static analysis + live-boot check asserting dev routes 404 in prod
 - ✅ Pre-commit hook diffing the live route table against a committed snapshot
 - ✅ `keep-alive.yml` workflow
+- ✅ `cron-job-health.yml` workflow — polls `cron.job_run_details` for the archive/hard-delete pg_cron jobs every 30 min and fails (alerting via GitHub's scheduled-workflow-failure notification, plus an optional webhook) on a failed run or a job that's stopped firing
 
 ## Known Issues ⚠️
 
@@ -205,15 +206,14 @@ Zoom < 11:  no markers     → too zoomed out
 5. Add functional/E2E test coverage
 6. Add retry logic for failed API requests
 7. Photo upload (Cloudflare R2 preferred — zero egress fees matter given the map-pan-triggered fetch pattern)
-8. Add error/alerting for the pg_cron archive + hard-delete jobs
 
 ### Long Term
 
-9. Real-time updates (Supabase Realtime)
-10. Push notifications
-11. User profiles
-12. Android testing
-13. More robust TTL-extension algorithm
+8. Real-time updates (Supabase Realtime)
+9. Push notifications
+10. User profiles
+11. Android testing
+12. More robust TTL-extension algorithm
 
 ## Key Decisions & Learnings
 
