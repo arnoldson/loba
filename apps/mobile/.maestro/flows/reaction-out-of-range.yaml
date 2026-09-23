@@ -1,0 +1,50 @@
+# Proximity-gated reaction, out of range (#30, phase 2): once the reactor has
+# moved away from the post, upvoting is refused with "Too far away" and the
+# count doesn't change.
+#
+# Touches real data: same setup/cleanup as reaction-in-range.yaml.
+appId: com.arnoldson.loba
+env:
+  POST_LAT: "37.2"
+  POST_LNG: "126.3"
+  # ~220m north of the post, well outside the 50m gate.
+  FAR_LAT: "37.202"
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+- runScript: ../scripts/create-post.js
+- setLocation:
+    latitude: ${POST_LAT}
+    longitude: ${POST_LNG}
+- runFlow:
+    file: ../subflows/login.yaml
+    env:
+      LOGIN_EMAIL: ${E2E_REACTOR_EMAIL}
+      LOGIN_PASSWORD: ${E2E_REACTOR_PASSWORD}
+
+# Open the post while standing on it (so the marker is at the map center)...
+- extendedWaitUntil:
+    visible:
+      id: "tile-marker"
+    timeout: 20000
+- tapOn:
+    id: "tile-marker"
+- extendedWaitUntil:
+    visible: ${output.postText}
+    timeout: 20000
+
+# ...then walk away. Reacting takes a fresh GPS fix at tap time.
+- setLocation:
+    latitude: ${FAR_LAT}
+    longitude: ${POST_LNG}
+- tapOn:
+    id: "upvote-${output.postId}"
+- extendedWaitUntil:
+    visible: "Too far away"
+    timeout: 15000
+- tapOn: "OK"
+
+# Refused: the count is still 0 (the optimistic +1 was rolled back).
+- assertVisible:
+    id: "upvote-${output.postId}"
+    text: "▲, 0"

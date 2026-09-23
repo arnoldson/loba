@@ -761,6 +761,7 @@ function VoteButtons({
           compact ? voteStyles.buttonCompact : voteStyles.button,
           isUpvoted && voteStyles.buttonUpvoted,
         ]}
+        testID={`upvote-${post.id}`}
         onPress={() => onReaction(post, "upvote")}
         disabled={isDisabled}
         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -789,6 +790,7 @@ function VoteButtons({
           compact ? voteStyles.buttonCompact : voteStyles.button,
           isDownvoted && voteStyles.buttonDownvoted,
         ]}
+        testID={`downvote-${post.id}`}
         onPress={() => onReaction(post, "downvote")}
         disabled={isDisabled}
         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -1009,6 +1011,10 @@ function PostListView({
           style={styles.postItem}
           onPress={() => onSelectPost(post)}
           activeOpacity={0.7}
+          // Without this the card is a single accessibility element that
+          // swallows the vote/delete buttons inside it, so neither
+          // VoiceOver nor UI tests (Maestro) can reach them individually.
+          accessible={false}
         >
           <View style={styles.authorRow}>
             <Text style={styles.displayName}>
