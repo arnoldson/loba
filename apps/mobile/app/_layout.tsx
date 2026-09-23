@@ -1,7 +1,16 @@
 import { useEffect } from "react"
-import { ActivityIndicator, StyleSheet, View } from "react-native"
+import { ActivityIndicator, LogBox, StyleSheet, View } from "react-native"
 import { Stack, useRouter, useSegments } from "expo-router"
 import { AuthProvider, useAuth } from "@/utils/auth"
+
+// E2E runs only (`EXPO_PUBLIC_E2E=1 npx expo start`, see .maestro/README.md).
+// In a dev build, LogBox's "Open debugger to view warnings" banner sits over
+// the bottom of the screen -- exactly where the tile modal's vote buttons are
+// -- and swallows Maestro's taps. The app's own console warnings are left
+// alone; this just stops them from raising the banner. No effect otherwise.
+if (process.env.EXPO_PUBLIC_E2E === "1") {
+  LogBox.ignoreAllLogs()
+}
 
 /**
  * Handles auth-based navigation.

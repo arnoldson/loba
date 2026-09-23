@@ -1,0 +1,51 @@
+# Proximity-gated reaction, in range (#30, phase 2): the reactor account, standing
+# on top of the author's post, can upvote it and toggle the vote off again.
+#
+# Touches real data: the post is created by scripts/create-post.js and deleted
+# (with any reaction on it) by scripts/cleanup-posts.js via onFlowComplete.
+appId: com.arnoldson.loba
+env:
+  # Open water in the Yellow Sea -- same spot as create-post.yaml. Posting/
+  # reacting is gated to 50m, so the simulator stands exactly on the post.
+  POST_LAT: "37.2"
+  POST_LNG: "126.3"
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+- runScript: ../scripts/create-post.js
+- setLocation:
+    latitude: ${POST_LAT}
+    longitude: ${POST_LNG}
+- runFlow:
+    file: ../subflows/login.yaml
+    env:
+      LOGIN_EMAIL: ${E2E_REACTOR_EMAIL}
+      LOGIN_PASSWORD: ${E2E_REACTOR_PASSWORD}
+
+- extendedWaitUntil:
+    visible:
+      id: "tile-marker"
+    timeout: 20000
+- tapOn:
+    id: "tile-marker"
+- extendedWaitUntil:
+    visible: ${output.postText}
+    timeout: 20000
+
+# Upvote: 0 -> 1. The button's label is "▲, <count>".
+- tapOn:
+    id: "upvote-${output.postId}"
+- extendedWaitUntil:
+    visible:
+      id: "upvote-${output.postId}"
+      text: "▲, 1"
+    timeout: 15000
+
+# Same reaction again toggles it off: 1 -> 0.
+- tapOn:
+    id: "upvote-${output.postId}"
+- extendedWaitUntil:
+    visible:
+      id: "upvote-${output.postId}"
+      text: "▲, 0"
+    timeout: 15000

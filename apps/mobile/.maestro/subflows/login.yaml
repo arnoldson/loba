@@ -1,5 +1,5 @@
-# Reusable: start logged out and log in as the E2E author account, ending on
-# the map screen. Used by every flow that needs an authenticated session.
+# Reusable: start logged out and log in, ending on the map screen.
+# Parameters (pass via runFlow's `env:`): LOGIN_EMAIL, LOGIN_PASSWORD.
 appId: com.arnoldson.loba
 ---
 # clearState wipes the stored Supabase session so this always starts logged
@@ -25,10 +25,10 @@ appId: com.arnoldson.loba
     timeout: 60000
 - tapOn:
     id: "login-email"
-- inputText: ${E2E_AUTHOR_EMAIL}
+- inputText: ${LOGIN_EMAIL}
 - tapOn:
     id: "login-password"
-- inputText: ${E2E_AUTHOR_PASSWORD}
+- inputText: ${LOGIN_PASSWORD}
 - tapOn:
     id: "login-submit"
 # iOS offers to save the password after a successful login; that system

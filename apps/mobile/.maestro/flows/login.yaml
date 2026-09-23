@@ -2,4 +2,8 @@
 # flows can reuse them; this flow is just "logging in works".
 appId: com.arnoldson.loba
 ---
-- runFlow: ../subflows/login-as-author.yaml
+- runFlow:
+    file: ../subflows/login.yaml
+    env:
+      LOGIN_EMAIL: ${E2E_AUTHOR_EMAIL}
+      LOGIN_PASSWORD: ${E2E_AUTHOR_PASSWORD}

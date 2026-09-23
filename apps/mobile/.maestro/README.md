@@ -10,7 +10,9 @@ Local, on-demand. Not run in CI yet -- see issue #30 for why.
 
 ## Each run
 1. `npm run backend` (local backend; talks to whatever `apps/backend/.env` points at)
-2. `npx expo run:ios` from `apps/mobile` (builds the dev client, starts Metro on :8081)
+2. From `apps/mobile`: `npx expo run:ios` once to build/install the dev client, then start
+   Metro with `EXPO_PUBLIC_E2E=1 npx expo start --dev-client` (the flag hides LogBox's
+   warning banner, which otherwise covers the modal's vote buttons and eats taps)
 3. `.maestro/run.sh` (all flows) or `.maestro/run.sh flows/login.yaml`
 
 ## Layout
@@ -28,6 +30,8 @@ Local, on-demand. Not run in CI yet -- see issue #30 for why.
 - In YAML, quote any `inputText` containing ` #` -- it's otherwise parsed as a comment.
 
 ## Gotchas
+- **The LogBox banner ("Open debugger to view warnings") eats taps** at the bottom of the
+  screen in dev builds. Start Metro with `EXPO_PUBLIC_E2E=1` (see above).
 - **Flows touch real data.** Every flow must delete what it creates (use
   `onFlowComplete` so cleanup runs on failure too).
 - **System dialogs hide the app from Maestro** (location permission, "Save Password?").
