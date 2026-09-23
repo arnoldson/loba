@@ -1,0 +1,46 @@
+# Backend functional tests (#30, phase 1).
+#
+# Drives the real Fastify app through inject() with the database and
+# Supabase Auth replaced by in-process fakes (apps/backend/test/setup.ts),
+# so this needs no secrets and no services -- and, unlike the local
+# pre-push hook, can't be skipped with --no-verify.
+name: Backend Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same filter-inside-the-job pattern as dev-route-safety.yml: the job
+      # always reports a status (so it can be a required check) but skips
+      # the work when nothing it covers changed.
+      - name: Check for backend changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'apps/backend/**'
+              - 'packages/shared/**'
+              - 'package-lock.json'
+              - '.github/workflows/backend-tests.yml'
+
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.backend == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.filter.outputs.backend == 'true'
+        run: npm ci --workspace=@loba/backend
+
+      - name: Run backend tests
+        if: steps.filter.outputs.backend == 'true'
+        run: npm test --workspace=@loba/backend
