@@ -12,7 +12,8 @@
     "backend": "npm run dev --workspace=@loba/backend",
     "backend:build": "npm run build --workspace=@loba/backend",
     "prepare": "husky || true",
-    "test:backend": "npm test --workspace=@loba/backend"
+    "test:backend": "npm test --workspace=@loba/backend",
+    "e2e": "apps/mobile/.maestro/e2e.sh"
   },
   "devDependencies": {
     "husky": "^9.1.7",
