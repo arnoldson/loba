@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Local mirror of the "Backend Tests" CI job (#30) for faster feedback.
+# CI is the actual gate -- this is skippable with --no-verify, it's not.
+npm test --workspace=@loba/backend --silent

@@ -11,7 +11,8 @@
     "mobile:prod": "npm run start:prod --workspace=@loba/mobile",
     "backend": "npm run dev --workspace=@loba/backend",
     "backend:build": "npm run build --workspace=@loba/backend",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "test:backend": "npm test --workspace=@loba/backend"
   },
   "devDependencies": {
     "husky": "^9.1.7",
