@@ -1,0 +1,74 @@
+# Map pan -> post fetch (#30, phase 2): posts outside the initial viewport aren't
+# shown; panning the map there fetches and shows them, and the posts left behind
+# are no longer what you see.
+#
+# Two author posts ~575m apart, the simulator standing on A. B is beyond the
+# initial fetch (viewport is ~440m wide; the density query reaches at most ~190m
+# past the screen edge), so B only appears if the pan triggers a new fetch.
+#
+# Touches real data: both posts are removed by cleanup-posts.js via onFlowComplete.
+appId: com.arnoldson.loba
+env:
+  # Open water in the Yellow Sea (see create-post.yaml).
+  A_LAT: "37.2"
+  A_LNG: "126.3"
+  B_LNG: "126.3065"
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+- runScript:
+    file: ../scripts/create-post.js
+    env:
+      POST_KEY: a
+      POST_LAT: ${A_LAT}
+      POST_LNG: ${A_LNG}
+- runScript:
+    file: ../scripts/create-post.js
+    env:
+      POST_KEY: b
+      POST_LAT: ${A_LAT}
+      POST_LNG: ${B_LNG}
+- setLocation:
+    latitude: ${A_LAT}
+    longitude: ${A_LNG}
+- runFlow:
+    file: ../subflows/login.yaml
+    env:
+      LOGIN_EMAIL: ${E2E_REACTOR_EMAIL}
+      LOGIN_PASSWORD: ${E2E_REACTOR_PASSWORD}
+
+# Initial viewport: A's marker only. Open it to see which post it holds.
+- extendedWaitUntil:
+    visible:
+      id: "tile-marker"
+    timeout: 20000
+- tapOn:
+    id: "tile-marker"
+- extendedWaitUntil:
+    visible: ${output.aText}
+    timeout: 20000
+- assertNotVisible: ${output.bText}
+- tapOn:
+    id: "tile-modal-close"
+
+# Pan east (drag the map left), slowly so it doesn't fling past B.
+- repeat:
+    times: 2
+    commands:
+      - swipe:
+          start: 90%, 50%
+          end: 10%, 50%
+          duration: 800
+      - waitForAnimationToEnd
+
+# The pan's fetch brings B into view; A has scrolled off.
+- extendedWaitUntil:
+    visible:
+      id: "tile-marker"
+    timeout: 20000
+- tapOn:
+    id: "tile-marker"
+- extendedWaitUntil:
+    visible: ${output.bText}
+    timeout: 20000
+- assertNotVisible: ${output.aText}

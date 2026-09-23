@@ -18,7 +18,8 @@ Local, on-demand. Not run in CI yet -- see issue #30 for why.
 ## Layout
 - `flows/` -- runnable tests (`maestro test flows` runs every file here)
 - `subflows/` -- reusable steps, deliberately outside `flows/` so they aren't run as tests
-- `scripts/` -- JS run by flows (`cleanup-posts.js`)
+- `scripts/` -- JS run by flows: `create-post.js` (API setup; pass `POST_KEY` to create several
+  posts in one flow -> `output.<key>Id` / `output.<key>Text`) and `cleanup-posts.js`
 
 ## Writing a flow that creates data
 - Prefix all test content with `e2e-`; `scripts/cleanup-posts.js` deletes the author's

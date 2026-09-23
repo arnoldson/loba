@@ -639,7 +639,11 @@ export function TileDetailsModal({
                 : `${tile.count} ${tile.count === 1 ? "post" : "posts"} in this area`}
             </Text>
 
-            <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
+            <TouchableOpacity
+              testID="tile-modal-close"
+              onPress={handleClose}
+              style={styles.closeButton}
+            >
               <Text style={styles.closeButtonText}>✕</Text>
             </TouchableOpacity>
           </View>
