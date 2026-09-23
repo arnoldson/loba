@@ -38,3 +38,5 @@ Thumbs.db
 # React Native
 .bundle/
 EOF
+# E2E run reports (recorded passes) -- local artifacts, see .maestro/e2e.sh
+apps/mobile/.maestro/reports/

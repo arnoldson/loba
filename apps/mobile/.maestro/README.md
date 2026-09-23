@@ -9,17 +9,35 @@ Local, on-demand. Not run in CI yet -- see issue #30 for why.
   dev-only `POST /api/dev/login` on a locally running backend (it creates + confirms).
 
 ## Each run
+**`npm run e2e`** from the repo root (or `npm run e2e -- flows/login.yaml` for a subset). It
+checks the prerequisites, starts the backend and Metro (with `EXPO_PUBLIC_E2E=1`), runs the
+flows, verifies no `e2e-` posts were left on the real map, and shuts everything down.
+Needs a booted simulator with the dev build installed (`npx expo run:ios` in `apps/mobile`
+once, and again after native dependency changes).
+
+Each run records a pass/fail in `.maestro/reports/<timestamp>-<commit>[-dirty]/`
+(`report.xml` JUnit + `summary.txt`; gitignored). Before a release, run it on a clean
+checkout of the release commit and keep that report -- that's the recorded pass.
+
+Not part of any git hook or CI: the full suite takes ~7 minutes, needs the simulator, and
+writes to the real database, so it's run deliberately -- before releases and after changes
+to reactions, location gating or the map screen.
+
+<details><summary>Doing it by hand instead</summary>
+
 1. `npm run backend` (local backend; talks to whatever `apps/backend/.env` points at)
-2. From `apps/mobile`: `npx expo run:ios` once to build/install the dev client, then start
-   Metro with `EXPO_PUBLIC_E2E=1 npx expo start --dev-client` (the flag hides LogBox's
+2. From `apps/mobile`: `EXPO_PUBLIC_E2E=1 npx expo start --dev-client` (the flag hides LogBox's
    warning banner, which otherwise covers the modal's vote buttons and eats taps)
 3. `.maestro/run.sh` (all flows) or `.maestro/run.sh flows/login.yaml`
+
+</details>
 
 ## Layout
 - `flows/` -- runnable tests (`maestro test flows` runs every file here)
 - `subflows/` -- reusable steps, deliberately outside `flows/` so they aren't run as tests
 - `scripts/` -- JS run by flows: `create-post.js` (API setup; pass `POST_KEY` to create several
-  posts in one flow -> `output.<key>Id` / `output.<key>Text`) and `cleanup-posts.js`
+  posts in one flow -> `output.<key>Id` / `output.<key>Text`) and `cleanup-posts.js`;
+  plus `check-leftovers.mjs`, the post-run safety net used by `e2e.sh`
 
 ## Writing a flow that creates data
 - Prefix all test content with `e2e-`; `scripts/cleanup-posts.js` deletes the author's
