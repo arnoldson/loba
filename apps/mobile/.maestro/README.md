@@ -13,6 +13,20 @@ Local, on-demand. Not run in CI yet -- see issue #30 for why.
 2. `npx expo run:ios` from `apps/mobile` (builds the dev client, starts Metro on :8081)
 3. `.maestro/run.sh` (all flows) or `.maestro/run.sh flows/login.yaml`
 
+## Layout
+- `flows/` -- runnable tests (`maestro test flows` runs every file here)
+- `subflows/` -- reusable steps, deliberately outside `flows/` so they aren't run as tests
+- `scripts/` -- JS run by flows (`cleanup-posts.js`)
+
+## Writing a flow that creates data
+- Prefix all test content with `e2e-`; `scripts/cleanup-posts.js` deletes the author's
+  posts with that prefix via the API.
+- Register it with `onFlowComplete` in the flow header -- it runs on pass **and** fail
+  (verified with a deliberately failing flow), so an aborted run can't leave posts behind.
+- Use `setLocation` *before* launching: the map reads the device location once on mount.
+  The create-post flow uses open water in the Yellow Sea (37.2, 126.3).
+- In YAML, quote any `inputText` containing ` #` -- it's otherwise parsed as a comment.
+
 ## Gotchas
 - **Flows touch real data.** Every flow must delete what it creates (use
   `onFlowComplete` so cleanup runs on failure too).

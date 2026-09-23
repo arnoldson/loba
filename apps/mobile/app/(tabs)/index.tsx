@@ -679,6 +679,7 @@ export default function HomeScreen() {
       )}
 
       <TouchableOpacity
+        testID="create-post-fab"
         style={styles.createButton}
         onPress={() => setIsCreateModalVisible(true)}
       >

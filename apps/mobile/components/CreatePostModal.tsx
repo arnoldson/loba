@@ -155,6 +155,7 @@ export function CreatePostModal({
           <Text style={styles.modalTitle}>Create Post</Text>
 
           <TextInput
+            testID="create-post-input"
             style={styles.textInput}
             placeholder="What's happening here? Use #tags inline"
             value={postText}
@@ -187,6 +188,7 @@ export function CreatePostModal({
             </TouchableOpacity>
 
             <TouchableOpacity
+              testID="create-post-submit"
               style={[styles.postButton, isSubmitting && styles.postButtonDisabled]}
               onPress={handleCreatePost}
               disabled={isSubmitting}

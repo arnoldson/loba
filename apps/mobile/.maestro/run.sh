@@ -13,6 +13,7 @@ source .env
 set +a
 
 exec maestro test \
+  -e E2E_API_URL="${E2E_API_URL:-http://localhost:3000}" \
   -e E2E_AUTHOR_EMAIL="$E2E_AUTHOR_EMAIL" \
   -e E2E_AUTHOR_PASSWORD="$E2E_AUTHOR_PASSWORD" \
   -e E2E_REACTOR_EMAIL="$E2E_REACTOR_EMAIL" \
