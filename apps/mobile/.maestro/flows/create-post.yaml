@@ -1,0 +1,46 @@
+# Post creation end to end (#30, phase 2): log in, create a post at a fixed
+# simulator location, see it as a map marker, open it and read it back.
+#
+# Touches real data: the post is deleted by scripts/cleanup-posts.js via
+# onFlowComplete, which runs on failure too. Test posts are identified by the
+# "e2e-" content prefix -- keep it, cleanup depends on it.
+appId: com.arnoldson.loba
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+# Yellow Sea off Incheon: an open-water point nobody would post from, so a test
+# post that somehow outlives cleanup can't show up in anyone's real map view.
+# Set BEFORE launch -- the map reads the device location once when it mounts.
+- setLocation:
+    latitude: 37.2
+    longitude: 126.3
+- runFlow: ../subflows/login-as-author.yaml
+
+- evalScript: ${output.postText = "e2e-" + new Date().getTime()}
+
+- tapOn:
+    id: "create-post-fab"
+- tapOn:
+    id: "create-post-input"
+- inputText: "${output.postText} #e2e"
+- tapOn:
+    id: "create-post-submit"
+
+# Native Alert; hides the app from Maestro until dismissed.
+- extendedWaitUntil:
+    visible: "Success!"
+    timeout: 20000
+- tapOn: "OK"
+
+# The new post shows up as a marker at the map center...
+- extendedWaitUntil:
+    visible:
+      id: "tile-marker"
+    timeout: 20000
+# ...and opening it shows the content we wrote. Post cards are one merged
+# accessibility element, hence the surrounding regex.
+- tapOn:
+    id: "tile-marker"
+- extendedWaitUntil:
+    visible: ".*${output.postText}.*"
+    timeout: 20000
