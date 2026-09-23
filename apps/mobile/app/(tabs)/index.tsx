@@ -573,7 +573,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="map-screen">
       <ErrorBoundary label="Map">
         <MapView
           ref={mapRef}
@@ -599,6 +599,7 @@ export default function HomeScreen() {
           {supertiles.map((tile) => (
             <Marker
               key={tile.key}
+              testID="tile-marker"
               coordinate={tile.center}
               onPress={() => handleTilePress(tile)}
               tracksViewChanges={!markersReady}

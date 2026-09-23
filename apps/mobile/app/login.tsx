@@ -78,6 +78,7 @@ export default function LoginScreen() {
         <View style={styles.form}>
           <TextInput
             style={styles.input}
+            testID="login-email"
             placeholder="Email"
             placeholderTextColor="#999"
             value={email}
@@ -90,6 +91,7 @@ export default function LoginScreen() {
 
           <TextInput
             style={styles.input}
+            testID="login-password"
             placeholder="Password"
             placeholderTextColor="#999"
             value={password}
@@ -100,6 +102,7 @@ export default function LoginScreen() {
 
           <TouchableOpacity
             style={[styles.button, isLoading && styles.buttonDisabled]}
+            testID="login-submit"
             onPress={handleSubmit}
             disabled={isLoading}
           >
@@ -115,6 +118,7 @@ export default function LoginScreen() {
 
         {/* Toggle sign in / sign up */}
         <TouchableOpacity
+          testID="login-toggle-mode"
           style={styles.toggle}
           onPress={() => setIsSignUp(!isSignUp)}
         >
