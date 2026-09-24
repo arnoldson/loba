@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from "react-native"
+import { MAX_FILTER_TAGS } from "@loba/shared"
 
 export interface PopularTag {
   tag: string
@@ -45,6 +46,10 @@ export function TagFilterBar({
     onTagsChanged([])
   }, [onTagsChanged])
 
+  // The server rejects more than MAX_FILTER_TAGS (#76), so once the
+  // cap is reached only deselecting stays possible.
+  const atLimit = selectedTags.length >= MAX_FILTER_TAGS
+
   // Don't render if no tags exist
   if (!isLoading && popularTags.length === 0) return null
 
@@ -71,11 +76,17 @@ export function TagFilterBar({
 
           {popularTags.map(({ tag, count }) => {
             const isSelected = selectedTags.includes(tag)
+            const isDisabled = atLimit && !isSelected
             return (
               <TouchableOpacity
                 key={tag}
-                style={[styles.chip, isSelected && styles.chipSelected]}
+                style={[
+                  styles.chip,
+                  isSelected && styles.chipSelected,
+                  isDisabled && styles.chipDisabled,
+                ]}
                 onPress={() => toggleTag(tag)}
+                disabled={isDisabled}
                 activeOpacity={0.7}
               >
                 <Text
@@ -135,6 +146,9 @@ const styles = StyleSheet.create({
   },
   chipSelected: {
     backgroundColor: "#007AFF",
+  },
+  chipDisabled: {
+    opacity: 0.4,
   },
   chipText: {
     fontSize: 14,

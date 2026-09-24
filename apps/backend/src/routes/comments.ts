@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { CommentService } from "../services/comments.js";
 import { requireAuth, optionalAuth } from "../middleware/auth.js";
 import { LocationQualityError } from "../utils/proximity.js";
+import { MAX_COMMENT_LENGTH } from "@loba/shared";
 import type {
   CreateCommentRequest,
   CreateCommentResponse,
@@ -55,7 +56,7 @@ export async function commentRoutes(fastify: FastifyInstance) {
         const userId = request.userId!;
         const { content } = request.body;
 
-        if (!content || content.trim().length === 0) {
+        if (typeof content !== "string" || content.trim().length === 0) {
           return reply.code(400).send({
             success: false,
             comment: {} as any,
@@ -63,11 +64,11 @@ export async function commentRoutes(fastify: FastifyInstance) {
           });
         }
 
-        if (content.length > 500) {
+        if (content.length > MAX_COMMENT_LENGTH) {
           return reply.code(400).send({
             success: false,
             comment: {} as any,
-            error: "Comment must be 500 characters or less",
+            error: `Comment must be ${MAX_COMMENT_LENGTH} characters or less`,
           });
         }
 

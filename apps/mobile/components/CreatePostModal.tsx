@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native"
+import { MAX_POST_LENGTH, getPostTagsError, normalizeTags } from "@loba/shared"
 import type { CreatePostRequest, CreatePostResponse } from "@loba/shared"
 import { useAuth } from "@/utils/auth"
 import { API_URL, isBannedError, UNDER_REVIEW_MESSAGE } from "@/utils/api"
@@ -61,10 +62,17 @@ export function CreatePostModal({
   // Derived, not stored: tags are always exactly what's parseable from the
   // current text, so there's nothing to lose sync with.
   const tags = useMemo(() => extractTags(postText), [postText])
+  // Same check the server applies (#76), so a post is blocked here
+  // rather than rejected after submit.
+  const tagsError = useMemo(() => getPostTagsError(normalizeTags(tags)), [tags])
 
   const handleCreatePost = async () => {
     if (!postText.trim()) {
       Alert.alert("Error", "Post content cannot be empty")
+      return
+    }
+    if (tagsError) {
+      Alert.alert("Error", tagsError)
       return
     }
 
@@ -161,7 +169,7 @@ export function CreatePostModal({
             value={postText}
             onChangeText={setPostText}
             multiline
-            maxLength={280}
+            maxLength={MAX_POST_LENGTH}
           />
 
           {tags.length > 0 && (
@@ -179,6 +187,12 @@ export function CreatePostModal({
             </View>
           )}
 
+          {tagsError && (
+            <Text testID="create-post-tags-error" style={styles.tagsError}>
+              {tagsError}
+            </Text>
+          )}
+
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={styles.cancelButton}
@@ -189,9 +203,12 @@ export function CreatePostModal({
 
             <TouchableOpacity
               testID="create-post-submit"
-              style={[styles.postButton, isSubmitting && styles.postButtonDisabled]}
+              style={[
+                styles.postButton,
+                (isSubmitting || tagsError) && styles.postButtonDisabled,
+              ]}
               onPress={handleCreatePost}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !!tagsError}
             >
               <Text style={styles.postButtonText}>
                 {isSubmitting ? "Posting…" : "Post"}
@@ -259,6 +276,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     marginLeft: 4,
+  },
+  tagsError: {
+    color: "#D32F2F",
+    fontSize: 14,
+    marginBottom: 12,
   },
   buttonRow: {
     flexDirection: "row",

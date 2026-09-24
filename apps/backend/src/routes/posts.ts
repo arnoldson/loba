@@ -2,6 +2,11 @@ import type { FastifyInstance } from "fastify"
 import { PostService } from "../services/posts.js"
 import { requireAuth, optionalAuth } from "../middleware/auth.js"
 import { LocationQualityError } from "../utils/proximity.js"
+import {
+  MAX_POST_LENGTH,
+  getPostTagsError,
+  normalizeTags,
+} from "@loba/shared"
 import type {
   CreatePostRequest,
   CreatePostResponse,
@@ -26,6 +31,38 @@ export async function postRoutes(fastify: FastifyInstance) {
             success: false,
             post: {} as any,
             error: "locationAccuracy and locationTimestamp are required",
+          })
+          return
+        }
+
+        const { content, tags } = request.body
+
+        if (typeof content !== "string" || content.trim().length === 0) {
+          reply.code(400).send({
+            success: false,
+            post: {} as any,
+            error: "Post content is required",
+          })
+          return
+        }
+
+        if (content.length > MAX_POST_LENGTH) {
+          reply.code(400).send({
+            success: false,
+            post: {} as any,
+            error: `Post must be ${MAX_POST_LENGTH} characters or less`,
+          })
+          return
+        }
+        const tagsError =
+          Array.isArray(tags) && tags.every((t) => typeof t === "string")
+            ? getPostTagsError(normalizeTags(tags))
+            : "tags must be an array of strings"
+        if (tagsError) {
+          reply.code(400).send({
+            success: false,
+            post: {} as any,
+            error: tagsError,
           })
           return
         }

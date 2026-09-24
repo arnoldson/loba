@@ -12,6 +12,7 @@ import {
   Alert,
   Platform,
 } from "react-native"
+import { MAX_COMMENT_LENGTH } from "@loba/shared"
 import type { PublicPost, PublicComment, ReportReason } from "@loba/shared"
 import {
   API_URL,
@@ -702,7 +703,7 @@ export function TileDetailsModal({
                 placeholderTextColor="#999"
                 value={newComment}
                 onChangeText={setNewComment}
-                maxLength={500}
+                maxLength={MAX_COMMENT_LENGTH}
                 multiline
               />
               <TouchableOpacity
