@@ -9,6 +9,12 @@ import { sql } from "kysely"
 import { db } from "../db/index.js"
 import { PostService } from "../services/posts.js"
 import { optionalAuth } from "../middleware/auth.js"
+import {
+  MAX_BBOX_SPAN_DEGREES,
+  MAX_FILTER_TAGS,
+  isBboxSpanAllowed,
+  normalizeTags,
+} from "@loba/shared"
 
 interface PostsInBoundsRequest {
   minLat: number
@@ -26,6 +32,24 @@ interface PostsDensityRequest {
   longitudeDelta: number
   viewportWidthPx: number
   tags?: string[]
+}
+
+const BBOX_TOO_LARGE_ERROR = `Bounding box can span at most ${MAX_BBOX_SPAN_DEGREES} degrees per axis`
+
+/**
+ * Drops blank/non-string entries and enforces MAX_FILTER_TAGS (#76),
+ * counted after normalization so "#Food" and "#food" count once.
+ * `tags` is undefined when there's nothing left to filter on.
+ */
+function parseFilterTags(tags: unknown): { tags?: string[]; error?: string } {
+  if (!Array.isArray(tags)) return {}
+  const clean = tags.filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0,
+  )
+  if (normalizeTags(clean).length > MAX_FILTER_TAGS) {
+    return { error: `Can filter by up to ${MAX_FILTER_TAGS} tags` }
+  }
+  return { tags: clean.length > 0 ? clean : undefined }
 }
 
 export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
@@ -46,7 +70,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         maxLat,
         minLng,
         maxLng,
-        limit = 5000,
+        limit,
         tags,
       } = request.body as PostsInBoundsRequest
 
@@ -63,16 +87,23 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         })
       }
 
+      if (!isBboxSpanAllowed(maxLat - minLat, maxLng - minLng)) {
+        return reply.status(400).send({
+          success: false,
+          error: BBOX_TOO_LARGE_ERROR,
+        })
+      }
+
       // Validate tags if provided
-      const cleanTags =
-        tags && Array.isArray(tags) && tags.length > 0
-          ? tags.filter((t) => typeof t === "string" && t.trim().length > 0)
-          : undefined
+      const { tags: cleanTags, error: tagsError } = parseFilterTags(tags)
+      if (tagsError) {
+        return reply.status(400).send({ success: false, error: tagsError })
+      }
 
       try {
         const { posts, dbQueryTime } = await postService.getPostsInBounds(
           { minLat, maxLat, minLng, maxLng },
-          limit,
+          Math.min(Number(limit) || 5000, 5000),
           request.userId,
           cleanTags,
         )
@@ -119,10 +150,10 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         tags,
       } = request.body as PostsDensityRequest
 
-      const cleanTags =
-        tags && Array.isArray(tags) && tags.length > 0
-          ? tags.filter((t) => typeof t === "string" && t.trim().length > 0)
-          : undefined
+      const { tags: cleanTags, error: tagsError } = parseFilterTags(tags)
+      if (tagsError) {
+        return reply.status(400).send({ success: false, error: tagsError })
+      }
 
       if (
         latitude == null ||
@@ -135,6 +166,13 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
           success: false,
           error:
             "Missing required fields: latitude, longitude, latitudeDelta, longitudeDelta, viewportWidthPx",
+        })
+      }
+
+      if (!isBboxSpanAllowed(latitudeDelta, longitudeDelta)) {
+        return reply.status(400).send({
+          success: false,
+          error: BBOX_TOO_LARGE_ERROR,
         })
       }
 
@@ -201,6 +239,13 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         })
       }
 
+      if (!isBboxSpanAllowed(maxLat - minLat, maxLng - minLng)) {
+        return reply.status(400).send({
+          success: false,
+          error: BBOX_TOO_LARGE_ERROR,
+        })
+      }
+
       let parsedCursor: { createdAt: string; id: string } | undefined
       if (cursor) {
         const [createdAt, id] = cursor.split(",")
@@ -213,10 +258,10 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
         parsedCursor = { createdAt, id }
       }
 
-      const cleanTags =
-        tags && Array.isArray(tags) && tags.length > 0
-          ? tags.filter((t) => typeof t === "string" && t.trim().length > 0)
-          : undefined
+      const { tags: cleanTags, error: tagsError } = parseFilterTags(tags)
+      if (tagsError) {
+        return reply.status(400).send({ success: false, error: tagsError })
+      }
 
       const parsedLimit = Math.min(Number(limit) || 25, 50)
 
@@ -284,6 +329,18 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
           success: false,
           error:
             "Missing or invalid required bounds: minLat, maxLat, minLng, maxLng",
+        })
+      }
+
+      if (
+        !isBboxSpanAllowed(
+          parsedMaxLat - parsedMinLat,
+          parsedMaxLng - parsedMinLng,
+        )
+      ) {
+        return reply.status(400).send({
+          success: false,
+          error: BBOX_TOO_LARGE_ERROR,
         })
       }
 

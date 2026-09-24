@@ -234,3 +234,61 @@ export function normalizeTags(tags: string[]): string[] {
   }
   return normalized
 }
+
+// ─── Input caps (#76) ────────────────────────────────────────────────
+//
+// Shared so the app's composer/filter UI and the server's 400 checks
+// can't drift apart. They have to agree from 1.0 on: a released binary
+// that lets users compose something the server rejects can only be
+// fixed through another App Review cycle.
+
+// Measured in JS string length (UTF-16 units), the same way the app's
+// TextInput maxLength counts, so a full-length draft always passes.
+export const MAX_POST_LENGTH = 280
+export const MAX_COMMENT_LENGTH = 500
+
+export const MAX_TAGS_PER_POST = 10
+// Counted without the leading '#'.
+export const MAX_TAG_LENGTH = 32
+export const MAX_FILTER_TAGS = 10
+
+// Per-axis cap on a map query's bbox, in degrees. Query cost follows
+// bbox size (see #68), and nothing else bounds it server-side. The
+// app's own zoom-out lock (#53, getMaxAllowedLongitudeDelta) tops out
+// around 2°×4.5° on a large iPhone and ~6.6° on a 13" iPad, so 10°
+// leaves headroom without letting a caller query a continent.
+export const MAX_BBOX_SPAN_DEGREES = 10
+
+/**
+ * Returns a user-facing error if a post's tags break the caps, or null
+ * if they're fine. Expects already-normalized tags (see normalizeTags)
+ * so "#Food" and "#food" count once, the same way the server stores
+ * them.
+ */
+export function getPostTagsError(tags: string[]): string | null {
+  if (tags.length > MAX_TAGS_PER_POST) {
+    return `Posts can have up to ${MAX_TAGS_PER_POST} tags`
+  }
+  const tooLong = tags.find(
+    (tag) => tag.replace(/^#/, "").length > MAX_TAG_LENGTH,
+  )
+  if (tooLong) {
+    return `Tags can be up to ${MAX_TAG_LENGTH} characters`
+  }
+  return null
+}
+
+/**
+ * True if both spans are finite and within MAX_BBOX_SPAN_DEGREES. The
+ * epsilon absorbs float error from spans computed as max - min, so a
+ * box exactly at the cap isn't rejected by rounding.
+ */
+export function isBboxSpanAllowed(
+  latitudeSpan: number,
+  longitudeSpan: number,
+): boolean {
+  return [latitudeSpan, longitudeSpan].every(
+    (span) =>
+      Number.isFinite(span) && Math.abs(span) <= MAX_BBOX_SPAN_DEGREES + 1e-9,
+  )
+}
