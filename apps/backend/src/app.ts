@@ -29,13 +29,15 @@ export async function buildApp(logger: FastifyServerOptions["logger"]) {
     // not the real client IP. Needed for user_ip_log (#24), the IP check
     // (#43) and the login rate limit (#79) to mean anything.
     //
-    // Trust only Railway's internal range, not every hop (`true`): with
-    // `true`, request.ip is the LEFTMOST X-Forwarded-For entry, which a
-    // client can set itself if the edge doesn't strip it -- and Railway's
-    // own answers on whether it does conflict. Trusting just 100.0.0.0/8
-    // picks the rightmost non-Railway entry, the one Railway appended,
-    // which is correct whether or not client values get stripped.
-    trustProxy: "100.0.0.0/8",
+    // `true` makes request.ip the LEFTMOST X-Forwarded-For entry, which
+    // Railway staff say their edge sets itself (stripping any
+    // client-supplied value). #79 tried trusting only 100.0.0.0/8 instead,
+    // but in production that resolved every request to the same Railway
+    // address: one login rate-limit bucket for all users, and every user
+    // "sharing an IP" for the ban-evasion check. Whether the edge really
+    // strips forged values is verified live -- see the #79 smoke tests in
+    // docs/PRODUCTION_CHECKLIST.md.
+    trustProxy: true,
     logger,
   })
 

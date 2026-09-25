@@ -7,6 +7,7 @@ import { LOGIN_RATE_LIMIT } from "../src/routes/auth-login.js"
 // Railway's proxy, and CORS off in production.
 
 const RAILWAY_PROXY = "100.64.0.7"
+const RAILWAY_EDGE = "66.33.22.11"
 const credentials = { email: "someone@example.com", password: "wrong" }
 
 describe("POST /api/auth/login rate limit", () => {
@@ -45,20 +46,18 @@ describe("POST /api/auth/login rate limit", () => {
     expect(other.statusCode).toBe(401)
   })
 
-  it("keys on the IP Railway appended, not a forged X-Forwarded-For", async () => {
-    // Each request forges a different leftmost entry; the real client is
-    // the entry Railway's proxy appended, so they all share one bucket.
-    const forged = (i: number) => ({
+  it("keys on the client IP Railway's edge puts first in X-Forwarded-For", async () => {
+    // Every client arrives from the same proxy address; the bucket must
+    // follow the leftmost X-Forwarded-For entry, not the proxy (#79: keying
+    // on a shared address put all users in one bucket in production).
+    const from = (client: string) => ({
       remoteAddress: RAILWAY_PROXY,
-      headers: { "x-forwarded-for": `203.0.113.${i}, 198.51.100.9` },
+      headers: { "x-forwarded-for": `${client}, ${RAILWAY_EDGE}` },
     })
-    for (let i = 0; i < LOGIN_RATE_LIMIT.max; i++) {
-      expect((await login(forged(i))).statusCode).toBe(401)
-    }
+    await exhaust(from("198.51.100.1"))
 
-    const res = await login(forged(99))
-
-    expect(res.statusCode).toBe(429)
+    expect((await login(from("198.51.100.1"))).statusCode).toBe(429)
+    expect((await login(from("198.51.100.2"))).statusCode).toBe(401)
   })
 
   it("doesn't rate limit other routes", async () => {
