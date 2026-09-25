@@ -72,12 +72,16 @@ After deployment, verify:
 - [ ] `POST /api/posts/in-bounds` returns posts
 - [ ] Auth flow works (signup → login → create post)
 - [ ] Proximity check rejects distant reactions
-- [ ] Login rate limit: 11 failed logins within 5 minutes from one
-      network get a 429 on the 11th, including when each request sends
-      a different forged `X-Forwarded-For` (proves `trustProxy` is keyed
-      on the IP Railway appends). A second network (e.g. phone on
-      cellular) must still get 401, not 429 (proves users don't share
-      one bucket).
+- [ ] Login rate limit, keyed per real client IP. Watch the
+      `x-ratelimit-remaining` header on failed logins:
+      - From one network, send failed logins that each forge a different
+        `X-Forwarded-For`. The count must keep dropping (then 429). If it
+        resets to 9 each time, forged headers get fresh buckets.
+      - Then from a second network (Mac on iPhone Personal Hotspot), one
+        failed login must show a fresh count, not 429. If it's also
+        limited, every user shares one bucket (#79 hit exactly this).
+      - Counters are in-memory per instance, so with N replicas the
+        effective limit is N x 10 and counts interleave.
 - [ ] Account deletion works end-to-end. `scripts/test-account-deletion.sh`
       needs `/api/dev/login`, so against production do it in the app:
       sign up, post, delete the account in Settings. Old credentials
