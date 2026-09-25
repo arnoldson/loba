@@ -18,5 +18,10 @@
   "devDependencies": {
     "husky": "^9.1.7",
     "typescript": "^5.3.3"
+  },
+  "overrides": {
+    "minimatch@3": {
+      "brace-expansion": "^1.1.21"
+    }
   }
 }
