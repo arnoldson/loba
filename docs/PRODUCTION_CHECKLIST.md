@@ -22,7 +22,9 @@
       Without this, `DELETE /account` throws immediately (see
       `apps/backend/src/services/account.ts`) and account deletion is
       broken in prod even though it works locally.
-- [ ] CORS origin is restricted (not `origin: true`)
+- [ ] No CORS headers in production: `curl -sI -H "Origin: https://example.com" <prod>/health`
+      shows no `access-control-allow-origin` (CORS is only registered
+      outside production, see `apps/backend/src/app.ts`)
 
 ## 🗄️ Database
 
@@ -41,7 +43,11 @@
 
 - [ ] Supabase Auth email confirmation is enabled (no auto-confirm)
 - [ ] JWT secret matches between Supabase and backend
-- [ ] Rate limiting is configured on auth endpoints
+- [ ] `/api/auth/login` rate limit is live per client IP (see smoke tests).
+      Login is proxied through the backend, so Supabase's own per-IP
+      limit sees only Railway's address and can't do this job.
+- [ ] Supabase "Before User Created" hook is set to `hook_reject_banned_email`
+      (Authentication → Hooks); the function existing isn't enough
 
 ## 📱 Frontend
 
@@ -54,7 +60,8 @@
 - [ ] Backend is deployed and accessible
 - [ ] SSL/TLS is configured (HTTPS only)
 - [ ] Health check endpoint (`/health`) is monitored
-- [ ] Logging is configured for production (not pino-pretty)
+- [ ] Logs are plain JSON in production (pino-pretty is dev-only, see
+      `apps/backend/src/index.ts`)
 
 ## 🧪 Smoke Tests
 
@@ -65,8 +72,16 @@ After deployment, verify:
 - [ ] `POST /api/posts/in-bounds` returns posts
 - [ ] Auth flow works (signup → login → create post)
 - [ ] Proximity check rejects distant reactions
-- [ ] Account deletion works end-to-end (`scripts/test-account-deletion.sh`):
-      old credentials fail to log in afterward; posts/comments remain
+- [ ] Login rate limit: 11 failed logins within 5 minutes from one
+      network get a 429 on the 11th, including when each request sends
+      a different forged `X-Forwarded-For` (proves `trustProxy` is keyed
+      on the IP Railway appends). A second network (e.g. phone on
+      cellular) must still get 401, not 429 (proves users don't share
+      one bucket).
+- [ ] Account deletion works end-to-end. `scripts/test-account-deletion.sh`
+      needs `/api/dev/login`, so against production do it in the app:
+      sign up, post, delete the account in Settings. Old credentials
+      fail to log in afterward; posts/comments remain
       visible reassigned to the sentinel; vote counts stay frozen (see
       `apps/backend/src/services/account.ts` for why votes aren't reassigned)
 

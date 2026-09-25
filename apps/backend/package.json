@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@loba/shared": "*",
     "@supabase/supabase-js": "^2.97.0",
     "dotenv": "^16.3.1",

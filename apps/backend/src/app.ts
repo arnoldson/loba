@@ -9,6 +9,7 @@
  */
 import Fastify, { type FastifyServerOptions } from "fastify"
 import cors from "@fastify/cors"
+import rateLimit from "@fastify/rate-limit"
 import { postRoutes } from "./routes/posts.js"
 import { seedRoutes } from "./routes/seed.js"
 import { db } from "./db/index.js"
@@ -25,8 +26,16 @@ export async function buildApp(logger: FastifyServerOptions["logger"]) {
   const fastify = Fastify({
     // Railway terminates TLS and proxies requests, so without this,
     // request.ip is Railway's internal proxy address for every request,
-    // not the real client IP. Needed for user_ip_log (#24) to mean anything.
-    trustProxy: true,
+    // not the real client IP. Needed for user_ip_log (#24), the IP check
+    // (#43) and the login rate limit (#79) to mean anything.
+    //
+    // Trust only Railway's internal range, not every hop (`true`): with
+    // `true`, request.ip is the LEFTMOST X-Forwarded-For entry, which a
+    // client can set itself if the edge doesn't strip it -- and Railway's
+    // own answers on whether it does conflict. Trusting just 100.0.0.0/8
+    // picks the rightmost non-Railway entry, the one Railway appended,
+    // which is correct whether or not client values get stripped.
+    trustProxy: "100.0.0.0/8",
     logger,
   })
 
@@ -43,9 +52,22 @@ export async function buildApp(logger: FastifyServerOptions["logger"]) {
     }
   })
 
-  // Register CORS
-  await fastify.register(cors, {
-    origin: true, // Allow all origins in development
+  // CORS only matters to browsers. The native app doesn't send an Origin,
+  // and nothing browser-based calls this API in production, so there it's
+  // left off entirely rather than reflecting every origin (#79).
+  if (process.env.NODE_ENV !== "production") {
+    await fastify.register(cors, { origin: true })
+  }
+
+  // Opt-in per route (config.rateLimit) rather than global -- see
+  // routes/auth-login.ts for the one route that uses it.
+  await fastify.register(rateLimit, {
+    global: false,
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: context.statusCode,
+      success: false,
+      error: `Too many attempts. Try again in ${context.after}.`,
+    }),
   })
   // Health check endpoint
   fastify.get("/health", async () => {
