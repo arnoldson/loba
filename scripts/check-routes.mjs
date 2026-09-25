@@ -97,17 +97,32 @@ function killServer(force = false) {
   }
 }
 
-async function fetchWithTimeout(url, timeoutMs) {
+async function fetchWithTimeout(url, timeoutMs, method = "GET") {
   const controller = new AbortController()
   const t = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(url, { signal: controller.signal })
+    return await fetch(url, { method, signal: controller.signal })
   } finally {
     clearTimeout(t)
   }
 }
 
 async function bootProdServer() {
+  // If something already answers on PORT (e.g. a server a previous run
+  // failed to kill), our spawned server can't bind, yet the health poll
+  // below would succeed against the stale one and every probe would test
+  // old code. Refuse to run instead.
+  try {
+    await fetchWithTimeout(`${BASE_URL}/health`, FETCH_TIMEOUT_MS)
+    throw new Error(
+      `Port ${PORT} is already in use by another server. Stop it ` +
+        `(lsof -ti tcp:${PORT} | xargs kill) or set CHECK_PORT, then re-run.`
+    )
+  } catch (err) {
+    if (err.message.startsWith(`Port ${PORT}`)) throw err
+    // connection refused/timed out: the port is free, which is what we want
+  }
+
   server = spawn("npx", ["tsx", "src/index.ts"], {
     cwd: BACKEND_DIR,
     env: { ...process.env, NODE_ENV: "production", PORT: String(PORT), HOST },
@@ -178,8 +193,14 @@ async function main() {
   let failed = false
 
   for (const route of devOnlyPaths) {
+    // A wildcard route (e.g. CORS's `OPTIONS *`, dev-only since #79) has
+    // no literal URL. Probe it with its own method on a path that does
+    // exist, so a 404 means the wildcard handler itself is gone.
+    const wildcard = route === "*"
+    const url = `${BASE_URL}${wildcard ? "/health" : route}`
+    const method = wildcard ? "OPTIONS" : "GET"
     try {
-      const res = await fetchWithTimeout(`${BASE_URL}${route}`, FETCH_TIMEOUT_MS)
+      const res = await fetchWithTimeout(url, FETCH_TIMEOUT_MS, method)
       if (res.status !== 404) {
         console.error(
           `❌ FAIL: ${route} returned ${res.status} in production mode (expected 404). ` +

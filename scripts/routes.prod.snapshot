@@ -16,7 +16,6 @@
   "HEAD /api/posts/mine",
   "HEAD /api/tags/popular",
   "HEAD /health",
-  "OPTIONS *",
   "POST /api/auth/login",
   "POST /api/posts",
   "POST /api/posts/:id/react",

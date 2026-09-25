@@ -34,9 +34,17 @@ interface LoginResponse {
   code?: "banned"
 }
 
+// Per client IP (#79). Supabase's own per-IP auth limit can't help here:
+// every sign-in reaches Supabase from this server's address, so without
+// this a password-guessing client is unthrottled, and all real users may
+// share one Supabase bucket. Counts every attempt, not just failures.
+// In-memory store, which is fine while the backend is a single instance.
+export const LOGIN_RATE_LIMIT = { max: 10, timeWindow: "5 minutes" }
+
 export async function authLoginRoutes(fastify: FastifyInstance) {
   fastify.post<{ Body: LoginBody; Reply: LoginResponse }>(
     "/auth/login",
+    { config: { rateLimit: LOGIN_RATE_LIMIT } },
     async (request, reply) => {
       const { email, password } = request.body
 

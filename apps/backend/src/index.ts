@@ -10,15 +10,20 @@ dotenv.config({ path: resolve(__dirname, "../.env") })
 // Now import everything else
 import { buildApp } from "./app.js"
 
-const logger = {
-  transport: {
-    target: "pino-pretty",
-    options: {
-      translateTime: "HH:MM:ss Z",
-      ignore: "pid,hostname",
-    },
-  },
-}
+// Plain JSON in production (what log tooling expects, and cheaper than
+// formatting every line); pino-pretty only for local readability.
+const logger =
+  process.env.NODE_ENV === "production"
+    ? true
+    : {
+        transport: {
+          target: "pino-pretty",
+          options: {
+            translateTime: "HH:MM:ss Z",
+            ignore: "pid,hostname",
+          },
+        },
+      }
 
 const { fastify, routes } = await buildApp(logger)
 

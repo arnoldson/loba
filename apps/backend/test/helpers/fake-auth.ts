@@ -18,3 +18,14 @@ export async function getUser(token: string) {
   }
   return { data: { user: { id: token.slice(PREFIX.length) } }, error: null }
 }
+
+/**
+ * Every sign-in fails like a wrong password. Enough to drive
+ * /api/auth/login's rate limit (#79), which counts every attempt.
+ */
+export async function signInWithPassword() {
+  return {
+    data: { session: null, user: null },
+    error: { message: "Invalid login credentials" },
+  }
+}
