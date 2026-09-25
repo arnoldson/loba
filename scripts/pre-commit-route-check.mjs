@@ -32,7 +32,9 @@ const SNAPSHOT_DEV = join(__dirname, "routes.dev.snapshot")
 const SNAPSHOT_PROD = join(__dirname, "routes.prod.snapshot")
 const ACK_LOG = join(__dirname, "route-acknowledgments.log")
 
-const ROUTE_RELEVANT_PATTERN = /apps\/backend\/src\/(index\.ts|routes\/.*\.ts)$/
+// app.ts is where routes and route-registering plugins (e.g. CORS's
+// `OPTIONS *`) are wired up, so it counts as much as the route files.
+const ROUTE_RELEVANT_PATTERN = /apps\/backend\/src\/(index\.ts|app\.ts|routes\/.*\.ts)$/
 
 function getStagedFiles() {
   const out = execSync("git diff --cached --name-only", { cwd: REPO_ROOT, encoding: "utf8" })
@@ -109,14 +111,26 @@ async function main() {
     process.exit(0)
   }
 
-  const { added, removed } = diffRouteTables(devSnapshot, devActual)
+  // Diff BOTH modes. A change can move only the production table -- e.g.
+  // removing a NODE_ENV gate exposes a dev route in production while the
+  // dev table stays identical -- and that's exactly the case this hook
+  // most needs to catch.
+  const devDiff = diffRouteTables(devSnapshot, devActual)
+  const prodDiff = diffRouteTables(prodSnapshot, prodActual)
+  const added = [...new Set([...devDiff.added, ...prodDiff.added])]
 
-  if (added.length === 0 && removed.length === 0) {
-    process.exit(0) // route files touched, but route table itself unchanged
+  if (
+    added.length === 0 &&
+    devDiff.removed.length === 0 &&
+    prodDiff.removed.length === 0
+  ) {
+    process.exit(0) // route files touched, but route tables unchanged
   }
 
-  for (const route of removed) {
-    console.log(`[route-check] ℹ️  Route removed: ${route}`)
+  for (const [mode, { removed }] of [["development", devDiff], ["production", prodDiff]]) {
+    for (const route of removed) {
+      console.log(`[route-check] ℹ️  Route removed (${mode}): ${route}`)
+    }
   }
 
   if (added.length > 0) {
