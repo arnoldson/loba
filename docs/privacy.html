@@ -52,7 +52,7 @@
 <body>
 
 <h1>Privacy Policy</h1>
-<p class="updated">Effective date: <span class="placeholder">July 29, 2026</span></p>
+<p class="updated">Effective date: September 25, 2026</p>
 
 <p>
   Loba ("Loba," "we," "us," or "our") is a hyperlocal, anonymous social
@@ -85,7 +85,9 @@
 <p>
   We do not track or store your location continuously in the
   background — location is only captured at the moment you take an
-  action (posting, reacting, or commenting).
+  action (posting, reacting, or commenting). Along with the coordinates,
+  your device reports how accurate the reading is and when it was taken,
+  which we use to reject stale or imprecise readings.
 </p>
 
 <h3>User content</h3>
@@ -95,6 +97,23 @@
   the map, for as long as the post remains active (see "Data Retention"
   below).
 </p>
+
+<h3>IP address</h3>
+<p>
+  When you use Loba while signed in, we record the IP address your
+  requests come from and link it to your account. We use it to:
+</p>
+<ul>
+  <li>Detect accounts that may be evading a ban (an account that shares
+      an IP address with a banned account may be limited to view-only
+      access until we review it)</li>
+  <li>Check that the location reported with a post is plausible for the
+      approximate region of your IP address. Posts that don't match are
+      flagged for moderation review; this does not reveal your IP
+      address or location to other users.</li>
+  <li>Limit repeated sign-in attempts, to protect accounts from
+      password guessing</li>
+</ul>
 
 <h3>Automatically collected information</h3>
 <p>
@@ -132,8 +151,9 @@
   <li>To operate core app functionality (displaying posts, enforcing
       proximity rules, managing post expiry)</li>
   <li>To authenticate your account and keep it secure</li>
-  <li>To prevent abuse (e.g., detecting self-voting, spam, or misuse of
-      the reporting system)</li>
+  <li>To prevent abuse (e.g., detecting self-voting, spam, spoofed
+      locations, ban evasion, or misuse of the reporting system)</li>
+  <li>To review reports of objectionable content and act on them</li>
   <li>To communicate with you about your account, if necessary</li>
 </ul>
 <p>We do not use your information for advertising, and we do not sell
@@ -141,10 +161,22 @@ your information to third parties.</p>
 
 <h2>4. How We Share Information</h2>
 <p>
-  We use <strong>Supabase</strong> as our backend infrastructure
-  provider (database hosting and authentication). Supabase processes
-  data on our behalf and does not use it for its own purposes. We do
-  not share your information with advertisers or data brokers.
+  We use a small number of service providers that process data on our
+  behalf and do not use it for their own purposes:
+</p>
+<ul>
+  <li><strong>Supabase</strong> — database hosting and authentication</li>
+  <li><strong>Railway</strong> — hosting for Loba's server, which
+      receives your app's requests (including your IP address)</li>
+</ul>
+<p>
+  The map in the app is provided by <strong>Apple Maps</strong>. Your
+  device requests map imagery from Apple directly, under Apple's own
+  privacy policy; we do not send Apple your account information or
+  posts.
+</p>
+<p>
+  We do not share your information with advertisers or data brokers.
 </p>
 <p>
   We may disclose information if required to do so by law, or in
@@ -155,8 +187,13 @@ your information to third parties.</p>
 <ul>
   <li>Posts expire automatically — 24 hours by default. Upvotes can
       extend a post's lifespan, up to a maximum of 7 days.</li>
-  <li>After expiry, posts are archived and permanently deleted after a
-      further retention period.</li>
+  <li>After expiry, posts are archived and permanently deleted 30 days
+      later.</li>
+  <li>When you report a post, we keep a copy of the reported content and
+      a record of which account filed the report, so we can review it —
+      even if the post later expires or is deleted.</li>
+  <li>If an account is banned, we keep its email address and associated
+      IP addresses to prevent it from signing up again.</li>
   <li>You can delete your own posts and comments at any time from the
       "My Posts" screen.</li>
   <li>Your account information is retained until you delete your
@@ -168,8 +205,14 @@ your information to third parties.</p>
   <li><strong>Delete individual posts or comments</strong> at any time
       via the "My Posts" screen.</li>
   <li><strong>Delete your account</strong> at any time from within the
-      app's settings. This permanently removes your account and
-      associated personal data, subject to any legal retention
+      app's settings. This permanently deletes your email address,
+      account profile, votes, and IP address records. Posts and comments
+      you made are not deleted immediately: they stay visible under a
+      different anonymous name and are no longer linked to you in any
+      way. They expire and are removed on the normal
+      schedule above. To remove specific content right away, delete it
+      from "My Posts" before deleting your account. Reports you filed are
+      kept for moderation, subject to any legal retention
       requirements.</li>
   <li><strong>Location permissions</strong> can be managed or revoked
       at any time via your device settings. Note that Loba requires
@@ -204,7 +247,7 @@ your information to third parties.</p>
 <h2>10. Contact Us</h2>
 <p>
   If you have questions about this Privacy Policy, contact us at:<br>
-  <span class="placeholder">arnold.son@icloud.com</span>
+  <a href="mailto:arnold.son@icloud.com">arnold.son@icloud.com</a>
 </p>
 
 </body>
