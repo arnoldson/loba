@@ -40,3 +40,8 @@ Thumbs.db
 EOF
 # E2E run reports (recorded passes) -- local artifacts, see .maestro/e2e.sh
 apps/mobile/.maestro/reports/
+
+# Local EAS build output
+*.ipa
+*.apk
+*.aab

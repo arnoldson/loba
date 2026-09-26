@@ -15,6 +15,7 @@ vi.mock("@supabase/supabase-js", async () => {
       auth: {
         getUser: (token: string) => getUser(token),
         signInWithPassword,
+        admin: { deleteUser: async () => ({ error: null }) },
       },
     }),
   }

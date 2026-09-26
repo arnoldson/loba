@@ -53,6 +53,16 @@ export class AccountService {
         .set({ user_id: DELETED_USER_ID })
         .where("user_id", "=", userId)
         .execute()
+
+      // IP history is personal data with no FK to auth.users in
+      // production, so nothing cascades it -- without this it outlives
+      // the account. The ban-evasion check (flagIfSharingIpWithBannedUser)
+      // reads BANNED users' rows, which this never touches: requireAuth
+      // rejects banned accounts before they can reach account deletion.
+      await trx
+        .deleteFrom("user_ip_log")
+        .where("user_id", "=", userId)
+        .execute()
     })
 
     // Deletes the auth user. This cascades user_profiles (intended —
