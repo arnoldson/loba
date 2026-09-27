@@ -8,12 +8,62 @@ import {
   Alert,
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
+import { useFocusEffect } from "expo-router"
+import type { BlockCountResponse } from "@loba/shared"
 import { useAuth } from "@/utils/auth"
 import { API_URL } from "@/utils/api"
 
 export default function SettingsScreen() {
   const { user, logout, getAuthHeaders } = useAuth()
   const [isDeleting, setIsDeleting] = useState(false)
+  const [blockedCount, setBlockedCount] = useState<number | null>(null)
+
+  // Refetched whenever the tab is shown, so a block made on the map is
+  // reflected here without a restart.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false
+      fetch(`${API_URL}/api/blocks/count`, { headers: getAuthHeaders() })
+        .then((res) => res.json() as Promise<BlockCountResponse>)
+        .then((data) => {
+          if (!cancelled && data.success) setBlockedCount(data.count)
+        })
+        .catch(() => {})
+      return () => {
+        cancelled = true
+      }
+    }, [getAuthHeaders]),
+  )
+
+  const handleUnblockAll = useCallback(() => {
+    Alert.alert(
+      "Unblock everyone?",
+      "Posts and comments from authors you've blocked will show up again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unblock All",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const res = await fetch(`${API_URL}/api/blocks`, {
+                method: "DELETE",
+                headers: getAuthHeaders(),
+              })
+              const data = await res.json()
+              if (data.success) {
+                setBlockedCount(0)
+              } else {
+                Alert.alert("Error", data.error || "Failed to unblock")
+              }
+            } catch {
+              Alert.alert("Error", "Could not connect to server")
+            }
+          },
+        },
+      ],
+    )
+  }, [getAuthHeaders])
 
   const handleLogout = useCallback(() => {
     Alert.alert("Log Out", "Are you sure you want to log out?", [
@@ -95,6 +145,30 @@ export default function SettingsScreen() {
           <TouchableOpacity style={styles.rowButton} onPress={handleLogout}>
             <Text style={styles.rowButtonText}>Log Out</Text>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Blocked Authors</Text>
+          <View style={styles.card}>
+            <Text style={styles.email}>
+              {blockedCount === null
+                ? "…"
+                : blockedCount === 0
+                  ? "You haven't blocked anyone"
+                  : `${blockedCount} blocked ${blockedCount === 1 ? "author" : "authors"}`}
+            </Text>
+          </View>
+          {!!blockedCount && (
+            <TouchableOpacity
+              style={[styles.rowButton, styles.unblockButton]}
+              onPress={handleUnblockAll}
+            >
+              <Text style={styles.rowButtonText}>Unblock All</Text>
+            </TouchableOpacity>
+          )}
+          <Text style={styles.dangerHint}>
+            Block an author from the ⋯ menu on any post or comment.
+          </Text>
         </View>
 
         <View style={styles.section}>
@@ -184,6 +258,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#007AFF",
+  },
+  unblockButton: {
+    marginTop: 8,
   },
   dangerButton: {
     borderWidth: 1,

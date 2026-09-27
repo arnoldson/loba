@@ -62,4 +62,56 @@ export class ModerationService {
       throw err
     }
   }
+
+  /**
+   * File a report against a comment (#86). Same rules as reportPost:
+   * snapshot the content so the evidence outlives the comment, no
+   * reporting your own, one report per comment per reporter.
+   */
+  async reportComment(
+    postId: string,
+    commentId: string,
+    reporterUserId: string,
+    reason: ReportReason,
+  ): Promise<void> {
+    const comment = await db
+      .selectFrom("comments")
+      .select(["id", "content", "user_id", "created_at"])
+      .where("id", "=", commentId)
+      .where("post_id", "=", postId)
+      .executeTakeFirst()
+
+    if (!comment) {
+      throw new Error("Comment not found")
+    }
+
+    if (comment.user_id === reporterUserId) {
+      throw new Error("You cannot report your own comment")
+    }
+
+    try {
+      await db
+        .insertInto("comment_reports")
+        .values({
+          comment_id: commentId,
+          post_id: postId,
+          reporter_user_id: reporterUserId,
+          reason,
+          content_snapshot: comment.content,
+          comment_user_id_snapshot: comment.user_id,
+          comment_created_at_snapshot: comment.created_at,
+        })
+        .execute()
+    } catch (err) {
+      // Unique violation on (comment_id, reporter_user_id)
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as { code: string }).code === "23505"
+      ) {
+        throw new Error("You have already reported this comment")
+      }
+      throw err
+    }
+  }
 }

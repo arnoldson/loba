@@ -63,6 +63,22 @@ export class AccountService {
         .deleteFrom("user_ip_log")
         .where("user_id", "=", userId)
         .execute()
+
+      // Blocks in both directions (#83). The FKs in 083 cascade this too,
+      // but production's schema has drifted from the migration files
+      // before (024's FKs never landed), so don't rely on them. Content
+      // a blocker had hidden from this user becomes visible again under
+      // the sentinel until it expires; that's accepted rather than
+      // keeping blocks keyed to a user that no longer exists.
+      await trx
+        .deleteFrom("user_blocks")
+        .where((eb) =>
+          eb.or([
+            eb("blocker_user_id", "=", userId),
+            eb("blocked_user_id", "=", userId),
+          ]),
+        )
+        .execute()
     })
 
     // Deletes the auth user. This cascades user_profiles (intended —

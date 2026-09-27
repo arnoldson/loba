@@ -1,4 +1,5 @@
 import { db } from "../db/index.js";
+import { notBlockedBy } from "./blocks.js";
 import { generateDisplayName } from "../utils/displayName.js";
 import type { PublicComment, UserProfile } from "@loba/shared";
 import {
@@ -125,6 +126,7 @@ export class CommentService {
       .selectFrom("comments")
       .selectAll()
       .where("post_id", "=", postId)
+      .where(notBlockedBy("comments", requestingUserId))
       .orderBy("created_at", "asc")
       .limit(limit)
       .execute();

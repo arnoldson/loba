@@ -16,6 +16,7 @@ import type {
   UserProfile,
 } from "@loba/shared"
 import { normalizeTags } from "@loba/shared"
+import { notBlockedBy } from "./blocks.js"
 import {
   computeSectorGeometry,
   cellBounds,
@@ -275,6 +276,7 @@ export class PostService {
       .selectAll()
       .where("id", "=", id)
       .where("archived_at", "is", null)
+      .where(notBlockedBy("posts", requestingUserId))
       .executeTakeFirst()
 
     if (!post) return null
@@ -325,6 +327,7 @@ export class PostService {
       )
       .where("archived_at", "is", null)
       .where("expires_at", ">", now)
+      .where(notBlockedBy("posts", requestingUserId))
 
     if (tags && tags.length > 0) {
       const normalizedTags = normalizeTags(tags)
@@ -412,6 +415,7 @@ export class PostService {
     longitudeDelta: number,
     viewportWidthPx: number,
     tags?: string[],
+    requestingUserId?: string,
   ): Promise<{
     groupingFactor: number
     sectors: {
@@ -451,6 +455,7 @@ export class PostService {
         WHERE location && ST_MakeEnvelope(${queryBounds.minLng}, ${queryBounds.minLat}, ${queryBounds.maxLng}, ${queryBounds.maxLat}, 4326)
           AND archived_at IS NULL
           AND expires_at > NOW()
+          AND ${notBlockedBy("posts", requestingUserId)}
           ${tagFilter}
       )
       SELECT row, col, COUNT(*) AS count, SUM(hashtext(id::text)) AS key_sum
@@ -509,6 +514,7 @@ export class PostService {
       )
       .where("archived_at", "is", null)
       .where("expires_at", ">", now)
+      .where(notBlockedBy("posts", requestingUserId))
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
 

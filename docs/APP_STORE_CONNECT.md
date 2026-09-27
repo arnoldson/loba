@@ -4,7 +4,7 @@ What Loba declares in App Store Connect, and why, so the answers stay in
 sync with the code and `privacy.html`. Update this when data handling
 changes, and re-check the App Privacy section in App Store Connect to match.
 
-Last checked against the code: 2026-09-25 (build 1.0.0 (4)).
+Last checked against the code: 2026-09-27 (user blocking, #83).
 
 ## App Privacy ("nutrition label")
 
@@ -18,7 +18,7 @@ or crash-reporting SDKs, and no data is shared with data brokers.
 | Contact Info → Email Address | Sign-up email (Supabase Auth) | Yes | No | App Functionality |
 | Location → Precise Location | GPS coordinates captured when posting, voting, or commenting | Yes | No | App Functionality |
 | Location → Coarse Location | Region derived from the request IP, used to check a post's location is plausible (#43) | Yes | No | App Functionality |
-| User Content → Other User Content | Posts, tags, comments, and reports | Yes | No | App Functionality |
+| User Content → Other User Content | Posts, tags, comments, reports, and blocks | Yes | No | App Functionality |
 | Identifiers → User ID | Account ID that posts, votes, and comments are stored against | Yes | No | App Functionality |
 | Usage Data → Product Interaction | Up/down votes, stored per account to prevent double and self-voting | Yes | No | App Functionality |
 

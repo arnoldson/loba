@@ -50,7 +50,8 @@ interface TileDetailsModalProps {
   tile: SelectedTile | null
   onClose: () => void
   authToken?: string | null
-  onPostDeleted?: (postId: string) => void
+  // A post left the map for this user: deleted by them, or blocked (#83).
+  onPostRemoved?: (postId: string) => void
   userLocation?: { latitude: number; longitude: number } | null
   selectedTags?: string[]
 }
@@ -60,7 +61,7 @@ export function TileDetailsModal({
   tile,
   onClose,
   authToken,
-  onPostDeleted,
+  onPostRemoved,
   userLocation,
   selectedTags,
 }: TileDetailsModalProps) {
@@ -100,6 +101,9 @@ export function TileDetailsModal({
   // (backend also enforces this via a unique constraint — this is just
   // for UI feedback, not the source of truth)
   const [reportedPostIds, setReportedPostIds] = useState<Set<string>>(new Set())
+  const [reportedCommentIds, setReportedCommentIds] = useState<Set<string>>(
+    new Set(),
+  )
 
   // Track local reaction state so UI updates immediately
   const [localReactions, setLocalReactions] = useState<
@@ -476,7 +480,7 @@ export function TileDetailsModal({
                   }
 
                   setDeletedPostIds((prev) => new Set(prev).add(post.id))
-                  onPostDeleted?.(post.id)
+                  onPostRemoved?.(post.id)
                 } else if (isRestrictedError(data)) {
                   Alert.alert("Account under review", UNDER_REVIEW_MESSAGE)
                 } else if (!isBannedError(data)) {
@@ -492,7 +496,7 @@ export function TileDetailsModal({
         ],
       )
     },
-    [authHeaders, selectedPost, onPostDeleted],
+    [authHeaders, selectedPost, onPostRemoved],
   )
 
   const handleDeleteComment = useCallback(
@@ -565,15 +569,142 @@ export function TileDetailsModal({
         }
       }
 
-      Alert.alert("Report this post", "Why are you reporting this post?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Spam", onPress: () => submitReport("spam") },
-        { text: "Harassment", onPress: () => submitReport("harassment") },
-        { text: "Illegal content", onPress: () => submitReport("illegal") },
-        { text: "Other", onPress: () => submitReport("other") },
-      ])
+      askReportReason("post", submitReport)
     },
     [authHeaders, reportedPostIds],
+  )
+
+  const handleReportComment = useCallback(
+    (comment: PublicComment) => {
+      if (!selectedPost || reportedCommentIds.has(comment.id)) return
+      const postId = selectedPost.id
+
+      askReportReason("comment", async (reason) => {
+        try {
+          const res = await fetch(
+            `${API_URL}/api/posts/${postId}/comments/${comment.id}/report`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders },
+              body: JSON.stringify({ reason }),
+            },
+          )
+          const data = await res.json()
+
+          if (data.success || res.status === 409) {
+            // 409 = already reported: same outcome from the user's view
+            setReportedCommentIds((prev) => new Set(prev).add(comment.id))
+            if (data.success) {
+              Alert.alert("Reported", "Thanks — we'll take a look at this comment.")
+            }
+          } else if (isRestrictedError(data)) {
+            Alert.alert("Account under review", UNDER_REVIEW_MESSAGE)
+          } else if (!isBannedError(data)) {
+            Alert.alert("Error", data.error || "Failed to report comment")
+          }
+        } catch {
+          Alert.alert("Error", "Could not connect to server")
+        }
+      })
+    },
+    [authHeaders, selectedPost, reportedCommentIds],
+  )
+
+  // ─── Blocking (#83) ─────────────────────────────────────────────────
+  //
+  // Future-only (see apps/backend/src/services/blocks.ts): the blocked
+  // item disappears now, and so does anything the author posts later.
+  // Their older posts can still show up until they expire, which the
+  // confirmation says up front so it doesn't look like a bug.
+
+  const confirmBlock = useCallback(
+    (url: string, onBlocked: () => void) => {
+      Alert.alert(
+        "Block this author?",
+        "You won't see this or anything they post from now on. Posts they made earlier may still appear until they expire. You can unblock everyone in Settings.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Block",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                const res = await fetch(url, { method: "POST", headers: authHeaders })
+                const data = await res.json()
+                if (data.success) {
+                  onBlocked()
+                } else if (isRestrictedError(data)) {
+                  Alert.alert("Account under review", UNDER_REVIEW_MESSAGE)
+                } else if (!isBannedError(data)) {
+                  Alert.alert("Error", data.error || "Failed to block")
+                }
+              } catch {
+                Alert.alert("Error", "Could not connect to server")
+              }
+            },
+          },
+        ],
+      )
+    },
+    [authHeaders],
+  )
+
+  const handleBlockPostAuthor = useCallback(
+    (post: PublicPost) =>
+      confirmBlock(`${API_URL}/api/posts/${post.id}/block-author`, () => {
+        if (selectedPost?.id === post.id) {
+          setSelectedPost(null)
+          setComments([])
+        }
+        setDeletedPostIds((prev) => new Set(prev).add(post.id))
+        onPostRemoved?.(post.id)
+      }),
+    [confirmBlock, selectedPost, onPostRemoved],
+  )
+
+  const handleBlockCommentAuthor = useCallback(
+    (comment: PublicComment) => {
+      if (!selectedPost) return
+      confirmBlock(
+        `${API_URL}/api/posts/${selectedPost.id}/comments/${comment.id}/block-author`,
+        () => setComments((prev) => prev.filter((c) => c.id !== comment.id)),
+      )
+    },
+    [confirmBlock, selectedPost],
+  )
+
+  const handlePostMenu = useCallback(
+    (post: PublicPost) => {
+      Alert.alert("Post options", undefined, [
+        ...(reportedPostIds.has(post.id)
+          ? []
+          : [{ text: "Report post", onPress: () => handleReportPost(post) }]),
+        {
+          text: "Block author",
+          style: "destructive" as const,
+          onPress: () => handleBlockPostAuthor(post),
+        },
+        { text: "Cancel", style: "cancel" as const },
+      ])
+    },
+    [reportedPostIds, handleReportPost, handleBlockPostAuthor],
+  )
+
+  const handleCommentMenu = useCallback(
+    (comment: PublicComment) => {
+      Alert.alert("Comment options", undefined, [
+        ...(reportedCommentIds.has(comment.id)
+          ? []
+          : [{ text: "Report comment", onPress: () => handleReportComment(comment) }]),
+        {
+          text: "Block author",
+          style: "destructive",
+          onPress: () => handleBlockCommentAuthor(comment),
+        },
+        { text: "Cancel", style: "cancel" },
+      ])
+    },
+    [reportedCommentIds, handleReportComment, handleBlockCommentAuthor],
   )
 
   // ─── Render ─────────────────────────────────────────────────────────
@@ -660,7 +791,8 @@ export function TileDetailsModal({
               onDeletePost={handleDeletePost}
               onDeleteComment={handleDeleteComment}
               onReaction={handleReaction}
-              onReportPost={handleReportPost}
+              onPostMenu={handlePostMenu}
+              onCommentMenu={handleCommentMenu}
               isReported={reportedPostIds.has(selectedPost.id)}
               isDeleting={isDeleting}
               canReact={canReact}
@@ -1102,7 +1234,8 @@ function PostDetailView({
   onDeletePost,
   onDeleteComment,
   onReaction,
-  onReportPost,
+  onPostMenu,
+  onCommentMenu,
   isReported,
   isDeleting,
   canReact,
@@ -1115,7 +1248,8 @@ function PostDetailView({
   onDeletePost: (post: PublicPost) => void
   onDeleteComment: (comment: PublicComment) => void
   onReaction: (post: PublicPost, reaction: "upvote" | "downvote") => void
-  onReportPost: (post: PublicPost) => void
+  onPostMenu: (post: PublicPost) => void
+  onCommentMenu: (comment: PublicComment) => void
   isReported: boolean
   isDeleting: boolean
   canReact: boolean
@@ -1146,12 +1280,12 @@ function PostDetailView({
           {!post.is_own && (
             <TouchableOpacity
               style={styles.reportButton}
-              onPress={() => onReportPost(post)}
-              disabled={isReported}
+              onPress={() => onPostMenu(post)}
+              accessibilityLabel="Post options: report or block"
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Text style={styles.reportButtonText}>
-                {isReported ? "Reported" : "🚩"}
+                {isReported ? "Reported ⋯" : "⋯"}
               </Text>
             </TouchableOpacity>
           )}
@@ -1208,13 +1342,22 @@ function PostDetailView({
                   </View>
                 )}
                 {comment.is_own && <Text style={styles.ownLabel}>you</Text>}
-                {comment.is_own && (
+                {comment.is_own ? (
                   <TouchableOpacity
                     style={styles.deleteButtonSm}
                     onPress={() => onDeleteComment(comment)}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
                     <Text style={styles.deleteButtonTextSm}>🗑</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.deleteButtonSm}
+                    onPress={() => onCommentMenu(comment)}
+                    accessibilityLabel="Comment options: report or block"
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Text style={styles.deleteButtonTextSm}>⋯</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -1238,6 +1381,20 @@ function PostDetailView({
 // ═══════════════════════════════════════════════════════════════════════
 // Utilities
 // ═══════════════════════════════════════════════════════════════════════
+
+/** Reason picker shared by post and comment reports (same reasons server-side). */
+function askReportReason(
+  kind: "post" | "comment",
+  onPick: (reason: ReportReason) => void,
+) {
+  Alert.alert(`Report this ${kind}`, `Why are you reporting this ${kind}?`, [
+    { text: "Cancel", style: "cancel" },
+    { text: "Spam", onPress: () => onPick("spam") },
+    { text: "Harassment", onPress: () => onPick("harassment") },
+    { text: "Illegal content", onPress: () => onPick("illegal") },
+    { text: "Other", onPress: () => onPick("other") },
+  ])
+}
 
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp)

@@ -17,7 +17,7 @@ describe("DELETE /api/account", () => {
   })
   afterAll(() => app.close())
 
-  it("reassigns content to the sentinel and deletes the user's IP history", async () => {
+  it("reassigns content to the sentinel and deletes IP history and blocks", async () => {
     const res = await app.inject({
       method: "DELETE",
       url: "/api/account",
@@ -32,5 +32,10 @@ describe("DELETE /api/account", () => {
     }
     const [ipDelete] = fakeDb.find(/^delete from "user_ip_log"/)
     expect(ipDelete.parameters).toEqual(["leaving-user"])
+
+    // Blocks the user made AND blocks against them (#83)
+    const [blockDelete] = fakeDb.find(/^delete from "user_blocks"/)
+    expect(blockDelete.sql).toMatch(/"blocker_user_id" = \$1 or "blocked_user_id" = \$2/)
+    expect(blockDelete.parameters).toEqual(["leaving-user", "leaving-user"])
   })
 })

@@ -485,7 +485,7 @@ export default function HomeScreen() {
   // the modal knows which sector it's showing, so this stays a
   // cheap, targeted invalidation instead of a full re-fetch of everything
   // visible.
-  const handlePostDeleted = useCallback(
+  const handlePostRemoved = useCallback(
     (_postId: string) => {
       if (selectedTile) {
         densityCache.invalidate(selectedTile.key)
@@ -703,7 +703,7 @@ export default function HomeScreen() {
           tile={selectedTile}
           onClose={() => setIsTileModalVisible(false)}
           authToken={session?.access_token ?? null}
-          onPostDeleted={handlePostDeleted}
+          onPostRemoved={handlePostRemoved}
           selectedTags={selectedTags}
           userLocation={
             location
