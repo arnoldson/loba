@@ -15,7 +15,10 @@ function TabIcon({
       <Text style={[styles.emoji, focused && styles.emojiFocused]}>
         {emoji}
       </Text>
-      <Text style={[styles.label, focused && styles.labelFocused]}>
+      <Text
+        style={[styles.label, focused && styles.labelFocused]}
+        numberOfLines={1}
+      >
         {label}
       </Text>
     </View>
@@ -68,6 +71,11 @@ const styles = StyleSheet.create({
   tabIcon: {
     alignItems: "center",
     justifyContent: "center",
+    // tabBarShowLabel is off, so the label renders inside the icon slot,
+    // which is only as wide as its content by default: "My Posts" and
+    // "Settings" wrapped to two lines. Every tab is >= 125pt wide even on
+    // the smallest supported iPhone, so a fixed 90 always fits.
+    width: 90,
   },
   emoji: {
     fontSize: 22,
