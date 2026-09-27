@@ -24,6 +24,21 @@ import {
   type Bounds,
 } from "../utils/grouping.js"
 
+/**
+ * Posts inside `b`, exactly. `location && envelope` alone isn't enough:
+ * on a geography column, && compares geocentric bounding boxes, which
+ * also match points just outside a small lat/lng rectangle. So a sector's
+ * post list included neighbouring sectors' posts ("3 posts in this area"
+ * over a list of 4). && stays so the GIST index still does the work; the
+ * half-open lat/lng range decides, using the same edges the density grid
+ * assigns cells with, so a sector's list always matches its count.
+ */
+function inBounds(b: Bounds) {
+  return sql<boolean>`location && ST_MakeEnvelope(${b.minLng}, ${b.minLat}, ${b.maxLng}, ${b.maxLat}, 4326)
+    AND latitude >= ${b.minLat} AND latitude < ${b.maxLat}
+    AND longitude >= ${b.minLng} AND longitude < ${b.maxLng}`
+}
+
 export class PostService {
   // ─── Post creation (location quality + IP corroboration, #43) ───────
 
@@ -323,7 +338,7 @@ export class PostService {
       .selectFrom("posts")
       .selectAll()
       .where(
-        sql<boolean>`location && ST_MakeEnvelope(${bounds.minLng}, ${bounds.minLat}, ${bounds.maxLng}, ${bounds.maxLat}, 4326)`,
+        inBounds(bounds),
       )
       .where("archived_at", "is", null)
       .where("expires_at", ">", now)
@@ -375,7 +390,7 @@ export class PostService {
       WHERE array_length(tags, 1) > 0
         AND archived_at IS NULL
         AND expires_at > NOW()
-        AND location && ST_MakeEnvelope(${bounds.minLng}, ${bounds.minLat}, ${bounds.maxLng}, ${bounds.maxLat}, 4326)
+        AND ${inBounds(bounds)}
       GROUP BY tag
       ORDER BY count DESC
       LIMIT ${limit}
@@ -452,7 +467,7 @@ export class PostService {
           floor((longitude * 111320 * ${cosRef} - ${xMin}) / ${cellMeters}) AS col,
           id
         FROM posts
-        WHERE location && ST_MakeEnvelope(${queryBounds.minLng}, ${queryBounds.minLat}, ${queryBounds.maxLng}, ${queryBounds.maxLat}, 4326)
+        WHERE ${inBounds(queryBounds)}
           AND archived_at IS NULL
           AND expires_at > NOW()
           AND ${notBlockedBy("posts", requestingUserId)}
@@ -510,7 +525,7 @@ export class PostService {
       .selectFrom("posts")
       .selectAll()
       .where(
-        sql<boolean>`location && ST_MakeEnvelope(${bounds.minLng}, ${bounds.minLat}, ${bounds.maxLng}, ${bounds.maxLat}, 4326)`,
+        inBounds(bounds),
       )
       .where("archived_at", "is", null)
       .where("expires_at", ">", now)
