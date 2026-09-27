@@ -205,6 +205,18 @@ export type ReportPostResponse = {
   error?: string
 }
 
+// Blocking (#83). Responses never identify the blocked author.
+export type BlockAuthorResponse = {
+  success: boolean
+  error?: string
+}
+
+export type BlockCountResponse = {
+  success: boolean
+  count: number
+  error?: string
+}
+
 // ─── Utility types ──────────────────────────────────────────────────
 
 export type ApiError = {

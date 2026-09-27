@@ -86,6 +86,30 @@ export interface UserIpLogTable {
   last_seen: Generated<string> // DEFAULT now() in DB
 }
 
+// Mirrors PostReportsTable; see scripts/sql/086-comment-reports.sql.
+export interface CommentReportsTable {
+  id: Generated<string>
+  comment_id: string
+  post_id: string
+  reporter_user_id: string
+  reason: "spam" | "harassment" | "illegal" | "other"
+  content_snapshot: string
+  comment_user_id_snapshot: string
+  comment_created_at_snapshot: string
+  status: Generated<"pending" | "reviewed">
+  created_at: Generated<string>
+}
+
+// One row per blocked item; see scripts/sql/083-user-blocks.sql.
+export interface UserBlocksTable {
+  id: Generated<string>
+  blocker_user_id: string
+  blocked_user_id: string
+  post_id: string | null
+  comment_id: string | null
+  created_at: Generated<string>
+}
+
 export interface PostReactionsTable {
   id: Generated<string> // DEFAULT gen_random_uuid()
   post_id: string
@@ -106,6 +130,8 @@ export interface Database {
   post_reports: PostReportsTable
   user_bans: UserBansTable
   user_ip_log: UserIpLogTable
+  user_blocks: UserBlocksTable
+  comment_reports: CommentReportsTable
 }
 
 // ─── Create Kysely instance ─────────────────────────────────────────

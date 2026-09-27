@@ -184,6 +184,7 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
           longitudeDelta,
           viewportWidthPx,
           cleanTags,
+          request.userId,
         )
 
         return {

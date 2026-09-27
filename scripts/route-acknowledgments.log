@@ -7,3 +7,9 @@
 2026-09-06T01:01:49.166Z  ACKNOWLEDGED ungated production route: HEAD /api/posts/by-supertile/:supertileId
 2026-09-06T01:02:06.233Z  ACKNOWLEDGED ungated production route: POST /api/posts/density-in-bounds
 2026-09-16T14:08:15.134Z  ACKNOWLEDGED ungated production route: POST /api/posts/by-bounds
+2026-09-27T22:21:15.150Z  ACKNOWLEDGED ungated production route: DELETE /api/blocks
+2026-09-27T22:21:16.794Z  ACKNOWLEDGED ungated production route: GET /api/blocks/count
+2026-09-27T22:21:17.981Z  ACKNOWLEDGED ungated production route: HEAD /api/blocks/count
+2026-09-27T22:21:18.797Z  ACKNOWLEDGED ungated production route: POST /api/posts/:id/block-author
+2026-09-27T22:21:19.982Z  ACKNOWLEDGED ungated production route: POST /api/posts/:postId/comments/:commentId/block-author
+2026-09-27T22:21:20.699Z  ACKNOWLEDGED ungated production route: POST /api/posts/:postId/comments/:commentId/report

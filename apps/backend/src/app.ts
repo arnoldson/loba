@@ -21,6 +21,7 @@ import { accountRoutes } from "./routes/account.js"
 import { moderationRoutes } from "./routes/moderation.js"
 import { authStatusRoutes } from "./routes/auth-status.js"
 import { authLoginRoutes } from "./routes/auth-login.js"
+import { blockRoutes } from "./routes/blocks.js"
 
 export async function buildApp(logger: FastifyServerOptions["logger"]) {
   const fastify = Fastify({
@@ -127,6 +128,7 @@ export async function buildApp(logger: FastifyServerOptions["logger"]) {
   await fastify.register(moderationRoutes, { prefix: "/api" })
   await fastify.register(authStatusRoutes, { prefix: "/api" })
   await fastify.register(authLoginRoutes, { prefix: "/api" })
+  await fastify.register(blockRoutes, { prefix: "/api" })
   await fastify.register(postsSpatialRoutes)
 
   return { fastify, routes: [...new Set(routeTable)].sort() }

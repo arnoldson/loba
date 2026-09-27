@@ -54,4 +54,50 @@ export async function moderationRoutes(fastify: FastifyInstance) {
       }
     },
   )
+
+  // ─── Report a comment (requires auth, #86) ──────────────────────────
+
+  fastify.post<{
+    Params: { postId: string; commentId: string }
+    Body: ReportPostRequest
+    Reply: ReportPostResponse
+  }>(
+    "/posts/:postId/comments/:commentId/report",
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const { reason } = request.body ?? {}
+
+      if (!reason || !VALID_REASONS.includes(reason)) {
+        return reply.code(400).send({
+          success: false,
+          error: `reason must be one of: ${VALID_REASONS.join(", ")}`,
+        })
+      }
+
+      try {
+        await moderationService.reportComment(
+          request.params.postId,
+          request.params.commentId,
+          request.userId!,
+          reason,
+        )
+        return { success: true }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to report comment"
+        const status =
+          message === "Comment not found"
+            ? 404
+            : message === "You cannot report your own comment"
+              ? 403
+              : message === "You have already reported this comment"
+                ? 409
+                : 500
+        return reply.code(status).send({
+          success: false,
+          error: status === 500 ? "Failed to report comment" : message,
+        })
+      }
+    },
+  )
 }
