@@ -49,6 +49,35 @@ describe("TTL / archive behaviour", () => {
   })
 })
 
+describe("spatial queries use exact bounds, not just geography &&", () => {
+  // On a geography column, && compares geocentric bounding boxes and also
+  // matches points just outside a small lat/lng rectangle, so a sector's
+  // list showed its neighbours' posts. Every spatial read must add the
+  // half-open lat/lng range the density grid uses.
+  const service = new PostService()
+  const b = { minLat: 37.759, maxLat: 37.7595, minLng: -122.427, maxLng: -122.4265 }
+  const exact = /latitude >= \$\d+ AND latitude < \$\d+\s+AND longitude >= \$\d+ AND longitude < \$\d+/
+
+  it.each([
+    ["sector list", () => service.getPostsInSector(b)],
+    ["in-bounds", () => service.getPostsInBounds(b)],
+    ["popular tags", () => service.getPopularTags(b, 20)],
+    ["density", () => service.getPostDensity(VIEW.lat, VIEW.lng, VIEW.latDelta, VIEW.lngDelta, VIEW.widthPx)],
+  ])("%s", async (_name, run) => {
+    await run()
+    const [query] = fakeDb.find(/ST_MakeEnvelope/)
+    expect(query.sql).toMatch(exact)
+  })
+
+  it("passes the sector's own edges as the range", async () => {
+    await service.getPostsInSector(b)
+    const [query] = fakeDb.find(/ST_MakeEnvelope/)
+    for (const edge of [b.minLat, b.maxLat, b.minLng, b.maxLng]) {
+      expect(query.parameters).toContain(edge)
+    }
+  })
+})
+
 describe("sector geometry (#63, replaces the old tile_id math)", () => {
   it("picks a power-of-two grouping factor that grows as the viewport zooms out", () => {
     const near = getGroupingFactor(0.002, VIEW.lat, VIEW.widthPx)
