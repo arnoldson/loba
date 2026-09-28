@@ -39,6 +39,17 @@ to reactions, location gating or the map screen.
   posts in one flow -> `output.<key>Id` / `output.<key>Text`) and `cleanup-posts.js`;
   plus `check-leftovers.mjs`, the post-run safety net used by `e2e.sh`
 
+## Map marker stability (#93)
+`marker-stability-equator.yaml` and `marker-stability-pole.yaml` seed a fixed spread of posts
+(`scripts/seed-spread.js`) straddling the equator and at 80°N, then pan, zoom in and recenter,
+checking after each gesture (`scripts/map-state.js`) that markers never move, cells never shift,
+zoom levels nest, and cell size depends only on zoom.
+
+Maestro can't read a map marker's coordinate, so in E2E builds (`EXPO_PUBLIC_E2E=1`) the map
+screen renders a tiny readout (`components/E2EMapState.tsx`, `id: e2e-map-state`) of the
+sectors from the last fetch -- a marker is drawn exactly at its sector's center.
+`subflows/map-capture.yaml` waits for the next fetch and captures it.
+
 ## Writing a flow that creates data
 - Prefix all test content with `e2e-`; `scripts/cleanup-posts.js` deletes the author's
   posts with that prefix via the API.

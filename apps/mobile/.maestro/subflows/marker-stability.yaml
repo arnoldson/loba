@@ -1,0 +1,132 @@
+# Reusable body of the marker-stability flows (#93). Seeds a spread of posts
+# around CENTER_LAT/CENTER_LNG, then pans and zooms the map, capturing what it
+# shows after each gesture and checking that:
+#   - markers never move and cells never shift under a pan (same zoom: every
+#     cell is either identical, holding the same posts, or doesn't overlap),
+#   - zoom steps nest (each small cell inside exactly one big one),
+#   - cell size depends only on zoom (checked on every capture, and after a
+#     round trip back to the starting view the grid is exactly as before).
+# Parameters (via runFlow's `env:`): CENTER_LAT, CENTER_LNG.
+#
+# The calling flow must register cleanup-posts.js in onFlowComplete.
+appId: com.arnoldson.loba
+---
+- runScript:
+    file: ../scripts/seed-spread.js
+    env:
+      CENTER_LAT: ${CENTER_LAT}
+      CENTER_LNG: ${CENTER_LNG}
+- setLocation:
+    latitude: ${CENTER_LAT}
+    longitude: ${CENTER_LNG}
+- runFlow:
+    file: login.yaml
+    env:
+      LOGIN_EMAIL: ${E2E_REACTOR_EMAIL}
+      LOGIN_PASSWORD: ${E2E_REACTOR_PASSWORD}
+
+# Starting view. The screen can fetch twice on launch (initial region, then
+# the camera move to the device location), so let that settle before
+# capturing; lastN = -1 makes the capture take whatever is showing.
+- extendedWaitUntil:
+    notVisible:
+      id: "e2e-map-state"
+      text: "n=0 .*"
+    timeout: 30000
+- extendedWaitUntil:
+    visible: "e2e-pause-never-shown"
+    timeout: 3000
+    optional: true
+- evalScript: ${output.lastN = "-1"}
+- runFlow:
+    file: map-capture.yaml
+    env:
+      NAME: start
+
+# Slow drags (no fling) of ~20% of the screen, so plenty of cells stay in
+# view to compare. The first pan's fetch is the first one sized from the
+# map's real on-screen region, so later pans compare against it.
+- swipe:
+    start: 60%, 55%
+    end: 40%, 55%
+    duration: 1000
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env:
+      NAME: p1
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: p1, BASE: start, EXPECT: any }
+
+- swipe:
+    start: 50%, 60%
+    end: 50%, 45%
+    duration: 1000
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env:
+      NAME: p2
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: p2, BASE: p1, EXPECT: pan }
+
+# Diagonally back to about where p1 was.
+- swipe:
+    start: 40%, 45%
+    end: 60%, 60%
+    duration: 1000
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env:
+      NAME: p3
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: p3, BASE: p2, EXPECT: pan }
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: p3, BASE: p1, EXPECT: pan }
+
+# Zoom in one level. Double-tap well left of the seeded spread so it can't
+# land on a marker (which would open the post list instead).
+- doubleTapOn:
+    point: 12%, 50%
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env:
+      NAME: z1
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: z1, BASE: p3, EXPECT: zoom-in }
+
+- swipe:
+    start: 60%, 50%
+    end: 45%, 50%
+    duration: 1000
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env:
+      NAME: z2
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: z2, BASE: z1, EXPECT: pan }
+
+# Back to the starting view: same zoom as p1, so the same cells, markers
+# and posts as p1 wherever they overlap.
+- tapOn:
+    id: "recenter-button"
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env:
+      NAME: back
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: back, BASE: p1, EXPECT: same }
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: back, BASE: z2, EXPECT: any }

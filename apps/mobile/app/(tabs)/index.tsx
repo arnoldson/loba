@@ -19,14 +19,23 @@ import {
 import { CreatePostModal } from "@/components/CreatePostModal"
 import { TagFilterBar, type PopularTag } from "@/components/TagFilterBar"
 import { getZoomLevel, getMaxAllowedLongitudeDelta } from "@/utils/tiles"
-import { DensityCache, type DensityEntry, type Bounds } from "@/utils/postGrouping"
+import {
+  DensityCache,
+  keepMarkerOrder,
+  type DensityEntry,
+  type Bounds,
+} from "@/utils/postGrouping"
 import { getBoundingBox } from "@/utils/mapBounds"
 import { perfMonitor } from "@/utils/diagnostics"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DevTestMenu } from "@/components/DevTestMenu"
 import { API_URL } from "@/utils/api"
+import { E2EMapState, type E2EFetch } from "@/components/E2EMapState"
 
 // Backend API URL
+
+// E2E runs only -- see components/E2EMapState.tsx.
+const IS_E2E = process.env.EXPO_PUBLIC_E2E === "1"
 
 // Initial map settings
 const INITIAL_LAT_DELTA = 0.005
@@ -80,6 +89,14 @@ export default function HomeScreen() {
   const [visibleSupertiles, setVisibleSupertiles] = useState<DensityEntry[]>(
     [],
   )
+
+  // What the last completed fetch was for -- feeds E2EMapState only.
+  const [e2eFetch, setE2eFetch] = useState<E2EFetch>({
+    n: 0,
+    region: null,
+    groupingFactor: 0,
+    viewportWidthPx,
+  })
 
   // Whether newly-added markers should still be tracked for re-snapshotting.
   // iOS can take a custom marker's view snapshot before its first layout pass
@@ -228,7 +245,18 @@ export default function HomeScreen() {
           }
           densityCache.addDensity(sectors, groupingFactor)
 
-          setVisibleSupertiles(densityCache.getVisible(visibleKeys))
+          // Previous markers keep their order, new ones are appended --
+          // see keepMarkerOrder for the native crash this avoids.
+          const visible = densityCache.getVisible(visibleKeys)
+          setVisibleSupertiles((prev) => keepMarkerOrder(prev, visible))
+          if (IS_E2E) {
+            setE2eFetch((prev) => ({
+              n: prev.n + 1,
+              region,
+              groupingFactor,
+              viewportWidthPx,
+            }))
+          }
 
           // No buffer anymore -- keep exactly what the latest fetch
           // covers. The 3x-buffer eviction margin existed to support the
@@ -565,6 +593,22 @@ export default function HomeScreen() {
           onRegionChange={handleRegionChange}
           onRegionChangeComplete={handleRegionChangeComplete}
         >
+          {/* First, so marker updates only ever append after it -- see
+              keepMarkerOrder. */}
+          {location && (
+            <Marker
+              coordinate={{
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+              }}
+              title="You are here"
+              zIndex={1000}
+              tracksViewChanges={false}
+            >
+              <UserLocationDot />
+            </Marker>
+          )}
+
           {supertiles.map((tile) => (
             <Marker
               key={tile.key}
@@ -578,6 +622,9 @@ export default function HomeScreen() {
             </Marker>
           ))}
 
+          {/* Dev only: while the outline is on, marker updates insert
+              mid-list again, so it can still hit keepMarkerOrder's native
+              bug (fixed properly by moving off react-native-maps 1.20). */}
           {__DEV__ &&
             showGridOutline &&
             gridOutlineCells.map(({ key, bounds }) => (
@@ -596,22 +643,10 @@ export default function HomeScreen() {
                 tappable={false}
               />
             ))}
-
-          {location && (
-            <Marker
-              coordinate={{
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-              }}
-              title="You are here"
-              zIndex={1000}
-              tracksViewChanges={false}
-            >
-              <UserLocationDot />
-            </Marker>
-          )}
         </MapView>
       </ErrorBoundary>
+
+      {IS_E2E && <E2EMapState fetch={e2eFetch} sectors={supertiles} />}
 
       {__DEV__ && (
         <ErrorBoundary label="Dev test menu">
@@ -655,7 +690,11 @@ export default function HomeScreen() {
         <Text style={styles.createButtonText}>+</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.recenterButton} onPress={recenterMap}>
+      <TouchableOpacity
+        testID="recenter-button"
+        style={styles.recenterButton}
+        onPress={recenterMap}
+      >
         <Text style={styles.recenterButtonText}>⦿</Text>
       </TouchableOpacity>
 
