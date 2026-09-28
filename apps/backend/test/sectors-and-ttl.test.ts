@@ -7,7 +7,10 @@ import {
   computeSectorGeometry,
   cellBounds,
   cellCenter,
+  cellOf,
   getGroupingFactor,
+  mercatorX,
+  mercatorY,
 } from "../src/utils/grouping.js"
 
 // Seoul, at a typical phone-map zoom.
@@ -78,10 +81,13 @@ describe("spatial queries use exact bounds, not just geography &&", () => {
   })
 })
 
-describe("sector geometry (#63, replaces the old tile_id math)", () => {
+describe("sector geometry (#93: world-anchored Web Mercator grid)", () => {
+  const SEOUL_POST = { lat: 37.5665, lng: 126.978 }
+  const cellMeters = () => geometry().cellMeters
+
   it("picks a power-of-two grouping factor that grows as the viewport zooms out", () => {
-    const near = getGroupingFactor(0.002, VIEW.lat, VIEW.widthPx)
-    const far = getGroupingFactor(0.2, VIEW.lat, VIEW.widthPx)
+    const near = getGroupingFactor(0.002, VIEW.widthPx)
+    const far = getGroupingFactor(0.2, VIEW.widthPx)
 
     expect(Math.log2(near) % 1).toBe(0)
     expect(Math.log2(far) % 1).toBe(0)
@@ -89,40 +95,97 @@ describe("sector geometry (#63, replaces the old tile_id math)", () => {
   })
 
   it("caps the grouping factor at city scale", () => {
-    expect(getGroupingFactor(90, VIEW.lat, VIEW.widthPx)).toBe(4096)
+    expect(getGroupingFactor(90, VIEW.widthPx)).toBe(8192)
   })
 
-  it("agrees on sector boundaries across a small pan (marker/cache key stability)", () => {
-    const a = geometry()
-    const b = geometry({ lat: VIEW.lat + 0.0001, lng: VIEW.lng + 0.0001 })
+  it("reaches the cap exactly where the app's zoom-out lock engages, at any latitude", () => {
+    // Mirrors apps/mobile/utils/tiles.ts's getMaxAllowedLongitudeDelta.
+    const lock = ((8192 / 2) * 3 * VIEW.widthPx) / (36 * 111320)
 
-    expect(b.groupingFactor).toBe(a.groupingFactor)
-    expect(b.queryBounds).toEqual(a.queryBounds)
+    expect(getGroupingFactor(lock * 1.001, VIEW.widthPx)).toBe(8192)
+    expect(getGroupingFactor(lock * 0.999, VIEW.widthPx)).toBe(4096)
   })
 
-  it("tiles the query envelope with contiguous, equal-sized cells", () => {
+  it("gives the same cell size at the same zoom anywhere in the world", () => {
+    const at = (lat: number, lng: number) =>
+      computeSectorGeometry(lat, lng, VIEW.latDelta, VIEW.lngDelta, VIEW.widthPx).cellMeters
+
+    const seoul = at(37.5665, 126.978)
+    expect(at(-0.18, -78.47)).toBe(seoul) // Quito
+    expect(at(71.2906, -156.7887)).toBe(seoul) // Utqiagvik
+  })
+
+  // The #93 bug: the old grid was rebuilt from each request's snapped
+  // viewport, so crossing a snap step moved every column and marker.
+  it("keeps a post in the same cell, with the same center, however the viewport pans", () => {
+    const cell = cellOf(cellMeters(), SEOUL_POST.lat, SEOUL_POST.lng)
+    const center = cellCenter(cellMeters(), cell.row, cell.col)
+
+    for (let i = -20; i <= 20; i++) {
+      const g = geometry({ lat: VIEW.lat + i * 0.0007, lng: VIEW.lng + i * 0.0011 })
+      expect(g.cellMeters).toBe(cellMeters())
+      expect(cellOf(g.cellMeters, SEOUL_POST.lat, SEOUL_POST.lng)).toEqual(cell)
+      expect(cellCenter(g.cellMeters, cell.row, cell.col)).toEqual(center)
+    }
+  })
+
+  it("nests each cell in exactly one cell of the next zoom step out", () => {
+    const fine = cellMeters()
+    const coarse = fine * 2
+    const { row, col } = cellOf(coarse, SEOUL_POST.lat, SEOUL_POST.lng)
+    const parent = cellBounds(coarse, row, col)
+
+    const children = [0, 1].flatMap((r) =>
+      [0, 1].map((c) => cellBounds(fine, row * 2 + r, col * 2 + c)),
+    )
+    expect(Math.min(...children.map((c) => c.minLat))).toBeCloseTo(parent.minLat, 10)
+    expect(Math.max(...children.map((c) => c.maxLat))).toBeCloseTo(parent.maxLat, 10)
+    expect(Math.min(...children.map((c) => c.minLng))).toBeCloseTo(parent.minLng, 10)
+    expect(Math.max(...children.map((c) => c.maxLng))).toBeCloseTo(parent.maxLng, 10)
+  })
+
+  it("grows the query envelope to whole cells covering the viewport", () => {
     const g = geometry()
-    const c00 = cellBounds(g, 0, 0)
-    const c01 = cellBounds(g, 0, 1)
-    const c10 = cellBounds(g, 1, 0)
+    const q = g.queryBounds
+
+    expect(q.minLat).toBeLessThanOrEqual(VIEW.lat - VIEW.latDelta / 2)
+    expect(q.maxLat).toBeGreaterThanOrEqual(VIEW.lat + VIEW.latDelta / 2)
+    expect(q.minLng).toBeLessThanOrEqual(VIEW.lng - VIEW.lngDelta / 2)
+    expect(q.maxLng).toBeGreaterThanOrEqual(VIEW.lng + VIEW.lngDelta / 2)
+
+    for (const edge of [mercatorY(q.minLat), mercatorY(q.maxLat), mercatorX(q.minLng), mercatorX(q.maxLng)]) {
+      expect(edge / g.cellMeters).toBeCloseTo(Math.round(edge / g.cellMeters), 6)
+    }
+  })
+
+  it("tiles contiguously and centers each cell on screen", () => {
+    const m = cellMeters()
+    const c00 = cellBounds(m, 0, 0)
+    const c01 = cellBounds(m, 0, 1)
+    const c10 = cellBounds(m, 1, 0)
 
     expect(c01.minLng).toBeCloseTo(c00.maxLng, 10)
     expect(c10.minLat).toBeCloseTo(c00.maxLat, 10)
-    expect(c00.minLat).toBeCloseTo(g.queryBounds.minLat, 10)
-    expect(c00.minLng).toBeCloseTo(g.queryBounds.minLng, 10)
 
-    const center = cellCenter(g, 0, 0)
-    expect(center.latitude).toBeCloseTo((c00.minLat + c00.maxLat) / 2, 10)
-    expect(center.longitude).toBeCloseTo((c00.minLng + c00.maxLng) / 2, 10)
+    const b = cellBounds(m, 5000, 3000)
+    const center = cellCenter(m, 5000, 3000)
+    expect(mercatorY(center.latitude)).toBeCloseTo((mercatorY(b.minLat) + mercatorY(b.maxLat)) / 2, 6)
+    expect(center.longitude).toBeCloseTo((b.minLng + b.maxLng) / 2, 10)
   })
 
-  it("makes cells roughly square in real meters at Seoul's latitude", () => {
-    const g = geometry()
-    const b = cellBounds(g, 0, 0)
-    const heightM = (b.maxLat - b.minLat) * 111_320
-    const widthM = (b.maxLng - b.minLng) * 111_320 * Math.cos((VIEW.lat * Math.PI) / 180)
+  it.each([
+    ["Quito", -0.18],
+    ["Seoul", 37.5665],
+    ["Utqiagvik", 71.2906],
+  ])("keeps cells square on screen at %s", (_name, lat) => {
+    const m = cellMeters()
+    const { row, col } = cellOf(m, lat, 0)
+    const b = cellBounds(m, row, col)
 
-    expect(widthM / heightM).toBeCloseTo(1, 1)
+    // On a Mercator map, on-screen size is Mercator size.
+    const heightPx = mercatorY(b.maxLat) - mercatorY(b.minLat)
+    const widthPx = mercatorX(b.maxLng) - mercatorX(b.minLng)
+    expect(widthPx / heightPx).toBeCloseTo(1, 9)
   })
 })
 
@@ -158,7 +221,7 @@ describe("POST /api/posts/density-in-bounds", () => {
     expect(body.groupingFactor).toBe(geometry().groupingFactor)
     expect(body.sectors).toHaveLength(1)
     expect(body.sectors[0]).toMatchObject({ key: "12345", count: 7 })
-    expect(body.sectors[0].bounds).toEqual(cellBounds(geometry(), 0, 1))
-    expect(body.sectors[0].center).toEqual(cellCenter(geometry(), 0, 1))
+    expect(body.sectors[0].bounds).toEqual(cellBounds(geometry().cellMeters, 0, 1))
+    expect(body.sectors[0].center).toEqual(cellCenter(geometry().cellMeters, 0, 1))
   })
 })

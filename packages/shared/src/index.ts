@@ -267,7 +267,7 @@ export const MAX_FILTER_TAGS = 10
 // Per-axis cap on a map query's bbox, in degrees. Query cost follows
 // bbox size (see #68), and nothing else bounds it server-side. The
 // app's own zoom-out lock (#53, getMaxAllowedLongitudeDelta) tops out
-// around 2°×4.5° on a large iPhone and ~6.6° on a 13" iPad, so 10°
+// around 1.3°×2.9° on a large iPhone and ~3.1° on a 13" iPad, so 10°
 // leaves headroom without letting a caller query a continent.
 export const MAX_BBOX_SPAN_DEGREES = 10
 
