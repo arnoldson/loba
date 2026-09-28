@@ -25,7 +25,11 @@ import {
   type DensityEntry,
   type Bounds,
 } from "@/utils/postGrouping"
-import { getBoundingBox } from "@/utils/mapBounds"
+import {
+  getBoundingBox,
+  isFitOf,
+  regionFromBoundaries,
+} from "@/utils/mapBounds"
 import { perfMonitor } from "@/utils/diagnostics"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { DevTestMenu } from "@/components/DevTestMenu"
@@ -309,6 +313,16 @@ export default function HomeScreen() {
   // Also moves the camera to the real location, since MapView now uses
   // initialRegion (mount-only) instead of a controlled region prop.
   // Intentionally omits selectedTags — initial fetch should always be unfiltered.
+  //
+  // Fetches the region the map is really showing, read back with
+  // getMapBoundaries(), not the region it was asked for (#97). The map
+  // fits INITIAL_LAT_DELTA to the screen, which at high latitude means a
+  // much wider longitude span -- and groupingFactor is sized from that
+  // span, so fetching the requested region gave markers sized for the
+  // wrong zoom. Nothing corrects it later: onRegionChangeComplete doesn't
+  // fire for this camera move (only for the user's first gesture). The
+  // move is applied asynchronously, so poll until the map shows it rather
+  // than reading back the view from before it.
   useEffect(() => {
     if (location && mapRef.current && !hasInitialFetched.current) {
       hasInitialFetched.current = true
@@ -319,22 +333,45 @@ export default function HomeScreen() {
         location.coords.longitude,
       )
 
-      const initialRegion: Region = {
+      const center = {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
+      }
+      const requestedRegion: Region = {
+        ...center,
         latitudeDelta: INITIAL_LAT_DELTA,
         longitudeDelta: INITIAL_LAT_DELTA,
       }
 
-      mapRef.current.animateToRegion(initialRegion, 0)
+      const map = mapRef.current
+      map.animateToRegion(requestedRegion, 0)
+      ;(async () => {
+        let region: Region | null = null
+        try {
+          for (let attempt = 0; attempt < 20 && !region; attempt++) {
+            if (attempt > 0) await new Promise((r) => setTimeout(r, 50))
+            const shown = regionFromBoundaries(await map.getMapBoundaries())
+            if (shown && isFitOf(shown, requestedRegion)) {
+              region = { ...shown, ...center }
+            }
+          }
+        } catch (err) {
+          console.warn("Couldn't read the initial map bounds:", err)
+        }
+        if (!region) {
+          // Falls back to the requested region -- the old behavior.
+          console.warn("Initial map bounds not settled; using requested region")
+          region = requestedRegion
+        }
 
-      const calculatedZoom = getZoomLevel(initialRegion.latitudeDelta)
-      console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`)
-      setZoom(calculatedZoom)
-      lastRegion.current = initialRegion
+        const calculatedZoom = getZoomLevel(region.latitudeDelta)
+        console.log(`🎯 Initial zoom calculated: ${calculatedZoom}`)
+        setZoom(calculatedZoom)
+        lastRegion.current = region
 
-      fetchVisiblePosts(initialRegion, selectedTags)
-      fetchPopularTags(initialRegion)
+        fetchVisiblePosts(region, selectedTags)
+        fetchPopularTags(region)
+      })()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location, fetchVisiblePosts, fetchPopularTags])
