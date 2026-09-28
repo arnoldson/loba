@@ -1,0 +1,18 @@
+# Marker stability near the equator (#93): markers stay put under pan and
+# zoom, and cell size depends only on zoom. See subflows/marker-stability.yaml
+# for what's checked.
+#
+# Open water in the Gulf of Guinea. The seeded spread (~220m either side)
+# straddles the equator, so cells on both sides of row 0 are exercised.
+#
+# Touches real data: the seeded posts are removed by cleanup-posts.js via
+# onFlowComplete.
+appId: com.arnoldson.loba
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+- runFlow:
+    file: ../subflows/marker-stability.yaml
+    env:
+      CENTER_LAT: "0.001"
+      CENTER_LNG: "2.5"

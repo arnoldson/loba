@@ -1,0 +1,18 @@
+# Marker stability near the pole (#93): the same checks as
+# marker-stability-equator.yaml at 80°N, where a degree of longitude is under
+# a fifth of its equatorial width -- where every degree-based grid broke down
+# (#60, #63). See subflows/marker-stability.yaml for what's checked.
+#
+# Open water in the Arctic Ocean, north of Alaska.
+#
+# Touches real data: the seeded posts are removed by cleanup-posts.js via
+# onFlowComplete.
+appId: com.arnoldson.loba
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+- runFlow:
+    file: ../subflows/marker-stability.yaml
+    env:
+      CENTER_LAT: "80.0"
+      CENTER_LNG: "-150.0"
