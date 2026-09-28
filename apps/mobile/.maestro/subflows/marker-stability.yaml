@@ -44,8 +44,8 @@ appId: com.arnoldson.loba
       NAME: start
 
 # Slow drags (no fling) of ~20% of the screen, so plenty of cells stay in
-# view to compare. The first pan's fetch is the first one sized from the
-# map's real on-screen region, so later pans compare against it.
+# view to compare. The launch fetch must already be sized for the map's real
+# on-screen region (#97), so the first pan keeps its cell size too.
 - swipe:
     start: 60%, 55%
     end: 40%, 55%
@@ -57,7 +57,7 @@ appId: com.arnoldson.loba
       NAME: p1
 - runScript:
     file: ../scripts/map-state.js
-    env: { ACTION: check, NAME: p1, BASE: start, EXPECT: any }
+    env: { ACTION: check, NAME: p1, BASE: start, EXPECT: pan }
 
 - swipe:
     start: 50%, 60%

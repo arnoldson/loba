@@ -1,4 +1,4 @@
-import { Region } from "react-native-maps";
+import type { LatLng, Region } from "react-native-maps";
 
 export function getBoundingBox(region: Region): {
   minLat: number;
@@ -96,4 +96,46 @@ export class BoundsCache {
       maxSize: this.maxSize,
     };
   }
+}
+
+/**
+ * The region the map is really showing, from getMapBoundaries(). The map
+ * fits whatever region it's asked for to the screen, so its real spans
+ * differ from the requested ones -- on a Mercator map a fixed latitude
+ * span needs ever more longitude as latitude rises (#97). Returns null
+ * for a degenerate box (map not laid out yet).
+ */
+export function regionFromBoundaries(bounds: {
+  northEast: LatLng;
+  southWest: LatLng;
+}): Region | null {
+  const latitudeDelta = bounds.northEast.latitude - bounds.southWest.latitude;
+  let longitudeDelta = bounds.northEast.longitude - bounds.southWest.longitude;
+  // Crossing the antimeridian.
+  if (longitudeDelta < 0) longitudeDelta += 360;
+  if (!(latitudeDelta > 0) || !(longitudeDelta > 0)) return null;
+  let longitude = bounds.southWest.longitude + longitudeDelta / 2;
+  if (longitude > 180) longitude -= 360;
+  return {
+    latitude: (bounds.northEast.latitude + bounds.southWest.latitude) / 2,
+    longitude,
+    latitudeDelta,
+    longitudeDelta,
+  };
+}
+
+/**
+ * Whether `shown` is the map's fit of `requested`: same center, and the
+ * span that governed the fit kept exactly (the map only ever widens the
+ * other one). False while the map is still showing an earlier view.
+ */
+export function isFitOf(shown: Region, requested: Region): boolean {
+  const near = (a: number, b: number, span: number) =>
+    Math.abs(a - b) <= span * 0.01;
+  return (
+    near(shown.latitude, requested.latitude, shown.latitudeDelta) &&
+    near(shown.longitude, requested.longitude, shown.longitudeDelta) &&
+    (near(shown.latitudeDelta, requested.latitudeDelta, requested.latitudeDelta) ||
+      near(shown.longitudeDelta, requested.longitudeDelta, requested.longitudeDelta))
+  );
 }
