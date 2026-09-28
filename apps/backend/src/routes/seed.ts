@@ -93,8 +93,7 @@ function generateSeedPosts(
     // cos(latitude)). Without correcting for this, a fixed-radius scatter
     // in raw degrees produces an elongated (non-circular) footprint at
     // high latitude — same radius in degrees, but a much narrower true
-    // width. Dividing the longitude offset by cos(latitude) compensates,
-    // matching the correction already used in tiles.ts's getGroupingFactor.
+    // width. Dividing the longitude offset by cos(latitude) compensates.
     const angle = Math.random() * 2 * Math.PI
     const distance = Math.random() * selectedCluster.radius
     const latRad = (selectedCluster.lat * Math.PI) / 180

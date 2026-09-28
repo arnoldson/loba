@@ -127,11 +127,10 @@ export const postsSpatialRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * POST /api/posts/density-in-bounds
-   * Get post counts as a set of viewport-relative sectors (#63) --
-   * no persistent world-anchored grid. Client sends raw viewport
-   * parameters only (latitude, longitude, deltas, viewport width) --
-   * the server determines sector size/position entirely; see
-   * computeSectorGeometry in utils/grouping.ts. Returns groupingFactor
+   * Get post counts as sectors of the world-anchored Web Mercator grid
+   * (#93). Client sends raw viewport parameters only (latitude,
+   * longitude, deltas, viewport width) -- the server determines sector
+   * size/position entirely; see utils/grouping.ts. Returns groupingFactor
    * plus only non-empty sectors, each as its own {key, count, center,
    * bounds} -- no post content, for cheap map-view rendering. The
    * client displays each sector directly; it does no geographic

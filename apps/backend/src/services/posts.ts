@@ -21,6 +21,8 @@ import {
   computeSectorGeometry,
   cellBounds,
   cellCenter,
+  METERS_PER_DEGREE,
+  MERCATOR_RADIUS,
   type Bounds,
 } from "../utils/grouping.js"
 
@@ -405,19 +407,19 @@ export class PostService {
   // ─── Density query ──────────────────────────────────────────────────
 
   /**
-   * Get sparse post density for a viewport, as a set of viewport-
-   * relative sectors (#63) -- no persistent grid identity, just the
-   * current request's own geometry (see computeSectorGeometry in
-   * utils/grouping.ts). Each non-empty sector is returned as its own
+   * Get sparse post density for a viewport, as sectors of the world-
+   * anchored Web Mercator grid (#93, see utils/grouping.ts). A post's
+   * sector depends only on its own coordinates and the zoom, so the same
+   * post lands in the same sector -- same center, same bounds -- however
+   * the viewport is panned. Each non-empty sector is returned as its own
    * {key, count, center, bounds} -- the client displays these directly,
    * doing no geographic math of its own.
    *
    * `key` is a hash of the sector's member post IDs (not its row/col
    * coordinates) so it only changes when membership actually changes --
-   * required so marker identity/position stays stable across a pan or
-   * zoom that doesn't change which posts are shown (#63's requirement
-   * that marker keys never be derived from sector coordinates, to avoid
-   * reintroducing #2's unstable-marker-identity crash class).
+   * #63's requirement that marker keys never be derived from sector
+   * coordinates, to avoid reintroducing #2's unstable-marker-identity
+   * crash class.
    *
    * Applies the same archived_at/expires_at filters as getPostsInBounds
    * so a marker's count never includes posts a tap-in wouldn't show —
@@ -445,16 +447,15 @@ export class PostService {
         ? sql`AND tags && ARRAY[${sql.join(normalizeTags(tags).map((t) => sql`${t}`))}]::text[]`
         : sql``
 
-    const geom = computeSectorGeometry(
+    const { groupingFactor, cellMeters, queryBounds } = computeSectorGeometry(
       latitude,
       longitude,
       latitudeDelta,
       longitudeDelta,
       viewportWidthPx,
     )
-    const { groupingFactor, cellMeters, cosRef, xMin, yMin, queryBounds } =
-      geom
 
+    // Same projection as mercatorX/mercatorY in utils/grouping.ts.
     const result = await sql<{
       row: string
       col: string
@@ -463,8 +464,8 @@ export class PostService {
     }>`
       WITH sectors AS (
         SELECT
-          floor((latitude * 111320 - ${yMin}) / ${cellMeters}) AS row,
-          floor((longitude * 111320 * ${cosRef} - ${xMin}) / ${cellMeters}) AS col,
+          floor(${MERCATOR_RADIUS} * ln(tan(pi() / 4 + radians(latitude) / 2)) / ${cellMeters}) AS row,
+          floor(longitude * ${METERS_PER_DEGREE} / ${cellMeters}) AS col,
           id
         FROM posts
         WHERE ${inBounds(queryBounds)}
@@ -486,8 +487,8 @@ export class PostService {
         return {
           key: r.key_sum,
           count: Number(r.count),
-          center: cellCenter(geom, row, col),
-          bounds: cellBounds(geom, row, col),
+          center: cellCenter(cellMeters, row, col),
+          bounds: cellBounds(cellMeters, row, col),
         }
       }),
     }

@@ -2,10 +2,9 @@
  * Client-side tile constants -- now used for exactly one thing: the
  * app's max zoom-out lock (#53). All other grid math (grouping factor
  * selection, sector geometry, marker centers) lives server-side -- see
- * apps/backend/src/utils/grouping.ts. There's no persistent world-
- * anchored grid at all anymore (#63): the client no longer computes any
- * of that; it sends raw viewport parameters and displays whatever
- * sectors the density endpoint returns.
+ * apps/backend/src/utils/grouping.ts. The client computes none of
+ * that; it sends raw viewport parameters and displays whatever sectors
+ * the density endpoint returns.
  */
 
 // Must match TILE_SIZE_METERS in apps/backend/src/utils/grouping.ts --
@@ -41,7 +40,7 @@ const MARKER_SIZE_PX = 36
 // comment for why the client still needs to know this independently
 // (a UX snap-back needs to react instantly to a gesture, not wait on a
 // network response).
-const CITY_CAP_GROUPING_FACTOR = 4096
+const CITY_CAP_GROUPING_FACTOR = 8192
 
 /**
  * The smallest longitudeDelta (i.e. least zoomed out) from which the
@@ -56,32 +55,25 @@ const CITY_CAP_GROUPING_FACTOR = 4096
  * holds factor at a given power of 2 for a whole range of rawFactor
  * (rawFactor in (CAP/2, CAP] all round to CAP), so the grid already
  * stops changing once rawFactor first exceeds CAP/2, a full zoom level
- * before rawFactor would naturally reach CAP itself. Using CAP instead
- * of CAP/2 here would pick a needlessly-far-out lock point and allow a
- * whole extra doubling-range of avoidable zoom (and viewport-cell-count
- * growth) before the lock engages, without preventing any additional
- * hops -- the grid's already static there.
+ * before rawFactor would naturally reach CAP itself.
  *
- * Exact, not a numeric search: solving rawFactor > CAP/2 for
- * longitudeDelta (the same terms getGroupingFactor's rawFactor
- * derivation uses, just solved for delta instead of for factor) gives
- * this closed form. Duplicating the derivation here (rather than
- * calling the server) is deliberate: the map screen uses this to
- * clamp/snap the region back the instant a zoom-out gesture settles --
- * that needs to happen locally, not after a network round trip.
+ * Exact, not a numeric search: rawFactor > CAP/2 solved for
+ * longitudeDelta. Latitude-independent, like the server's grouping
+ * factor (#93: the grid is in Web Mercator space, so cell size depends
+ * only on zoom), so the lock engages at the same zoom everywhere.
+ * Duplicating the derivation here (rather than calling the server) is
+ * deliberate: the map screen uses this to clamp/snap the region back
+ * the instant a zoom-out gesture settles -- that needs to happen
+ * locally, not after a network round trip.
  *
  * Going further out than this lock is out of scope for the app
- * entirely right now (the grid would be frozen server-side but a
- * viewport at that scale puts far more cells in view than
- * MAX_MARKERS budgets for) -- see the follow-up issue on metro-scale
- * zoom.
+ * entirely right now (a viewport at that scale puts far more cells in
+ * view than MAX_MARKERS budgets for) -- see the follow-up issue on
+ * metro-scale zoom.
  */
-export function getMaxAllowedLongitudeDelta(
-  latitude: number,
-  viewportWidthPx: number,
-): number {
+export function getMaxAllowedLongitudeDelta(viewportWidthPx: number): number {
   return (
     ((CITY_CAP_GROUPING_FACTOR / 2) * TILE_SIZE_METERS * viewportWidthPx) /
-    (MARKER_SIZE_PX * 111320 * Math.cos((latitude * Math.PI) / 180))
+    (MARKER_SIZE_PX * 111320)
   )
 }
