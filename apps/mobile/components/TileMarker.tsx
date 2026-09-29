@@ -3,9 +3,10 @@ import { View, Text, StyleSheet } from "react-native";
 interface TileMarkerProps {
   count: number;
   groupingFactor?: number | null;
+  testID?: string;
 }
 
-export function TileMarker({ count, groupingFactor }: TileMarkerProps) {
+export function TileMarker({ count, groupingFactor, testID }: TileMarkerProps) {
   // Determine color based on post count
   const getColor = () => {
     if (count === 1) return "#4CAF50"; // Green - single post
@@ -18,7 +19,7 @@ export function TileMarker({ count, groupingFactor }: TileMarkerProps) {
   const color = getColor();
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID={testID}>
       {/* Main circular marker */}
       <View style={[styles.marker, { backgroundColor: color }]}>
         <Text style={styles.count}>{count}</Text>

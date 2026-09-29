@@ -19,7 +19,8 @@ Each run records a pass/fail in `.maestro/reports/<timestamp>-<commit>[-dirty]/`
 (`report.xml` JUnit + `summary.txt`; gitignored). Before a release, run it on a clean
 checkout of the release commit and keep that report -- that's the recorded pass.
 
-Not part of any git hook or CI: the full suite takes ~7 minutes, needs the simulator, and
+Not part of any git hook or CI: the full suite takes ~35 minutes (the two coverage flows are
+~10 each -- run the others alone with `npm run e2e -- flows/<name>.yaml`), needs the simulator, and
 writes to the real database, so it's run deliberately -- before releases and after changes
 to reactions, location gating or the map screen.
 
@@ -39,16 +40,26 @@ to reactions, location gating or the map screen.
   posts in one flow -> `output.<key>Id` / `output.<key>Text`) and `cleanup-posts.js`;
   plus `check-leftovers.mjs`, the post-run safety net used by `e2e.sh`
 
-## Map marker stability (#93)
-`marker-stability-equator.yaml` and `marker-stability-pole.yaml` seed a fixed spread of posts
-(`scripts/seed-spread.js`) straddling the equator and at 80°N, then pan, zoom in and recenter,
-checking after each gesture (`scripts/map-state.js`) that markers never move, cells never shift,
-zoom levels nest, and cell size depends only on zoom.
+## Map markers (#93, #95)
+- `marker-stability-{equator,pole}.yaml` seed a fixed spread of posts (`scripts/seed-spread.js`)
+  straddling the equator and at 80°N, then pan, zoom in and recenter, checking after each gesture
+  (`scripts/map-state.js`) that markers never move, cells never shift, zoom levels nest, and cell
+  size depends only on zoom. `marker-stability-outline.yaml` does the same with the dev sector
+  outline on, so polygons change alongside markers on every update.
+- `marker-coverage-{equator,pole}.yaml` seed ~460 posts across and past the whole screen
+  (`scripts/seed-grid.js`; dense enough at the widest zoom that every cell on screen holds one),
+  then at four zoom levels from street level out to near the zoom-out lock check after every view
+  change that every seeded post on screen has a marker -- no strips, sides or corners unrendered.
 
-Maestro can't read a map marker's coordinate, so in E2E builds (`EXPO_PUBLIC_E2E=1`) the map
-screen renders a tiny readout (`components/E2EMapState.tsx`, `id: e2e-map-state`) of the
-sectors from the last fetch -- a marker is drawn exactly at its sector's center.
-`subflows/map-capture.yaml` waits for the next fetch and captures it.
+Maestro can't read a map marker's coordinate or pinch, so E2E builds (`EXPO_PUBLIC_E2E=1`) add
+two hooks to the map screen (`components/E2EMapState.tsx`):
+- `id: e2e-map-state` -- a tiny readout of the sectors from the last fetch (a marker is drawn
+  exactly at its sector's center) and the map's real on-screen bounds.
+  `subflows/map-capture.yaml` waits for the next fetch and captures it.
+- `id: e2e-goto` -- type `lat,lng,longitudeDelta` and submit to move the camera, e.g. to zoom out.
+
+Markers are found by `id: tile-marker`, which sits on the marker's content view: react-native-maps'
+Fabric `Marker` doesn't pass its own `testID` on to iOS.
 
 ## Writing a flow that creates data
 - Prefix all test content with `e2e-`; `scripts/cleanup-posts.js` deletes the author's

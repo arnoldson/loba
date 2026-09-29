@@ -1,6 +1,7 @@
 # Reusable (#93): wait for the map's next fetch to land, then capture the
 # E2E readout (components/E2EMapState.tsx) as output.<NAME> and check its cell
-# sizes (scripts/map-state.js). Parameters (via runFlow's `env:`): NAME.
+# sizes (scripts/map-state.js). Parameters (via runFlow's `env:`): NAME, and
+# optionally COVER ("1" to also check the whole screen has markers).
 appId: com.arnoldson.loba
 ---
 # The readout starts with "n=<fetch count>", so it stops matching the last
@@ -17,6 +18,7 @@ appId: com.arnoldson.loba
     env:
       ACTION: capture
       NAME: ${NAME}
+      COVER: '${typeof COVER === "undefined" ? "0" : COVER}'
 # The map screen drops a fetch that starts within 1s of the previous one, so
 # leave a gap before the next gesture. (Nothing ever shows this text; the wait
 # is just a pause.)

@@ -16,3 +16,4 @@ onFlowComplete:
     env:
       CENTER_LAT: "0.001"
       CENTER_LNG: "2.5"
+      GRID_OUTLINE: "off"

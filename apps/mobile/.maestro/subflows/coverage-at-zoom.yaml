@@ -1,0 +1,38 @@
+# Reusable (part of marker-coverage.yaml): move the camera to CENTER_LAT,
+# CENTER_LNG at a longitude span of ZOOM, then check the whole screen has
+# markers there and after a pan left and a pan up.
+appId: com.arnoldson.loba
+---
+- tapOn:
+    id: "e2e-goto"
+- eraseText
+- inputText: "${CENTER_LAT},${CENTER_LNG},${ZOOM}"
+- pressKey: Enter
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env: { NAME: "z${ZOOM}", COVER: "1" }
+
+- swipe:
+    start: 65%, 55%
+    end: 35%, 55%
+    duration: 1000
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env: { NAME: "z${ZOOM}-left", COVER: "1" }
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: "z${ZOOM}-left", BASE: "z${ZOOM}", EXPECT: pan }
+
+- swipe:
+    start: 50%, 65%
+    end: 50%, 40%
+    duration: 1000
+- waitForAnimationToEnd
+- runFlow:
+    file: map-capture.yaml
+    env: { NAME: "z${ZOOM}-up", COVER: "1" }
+- runScript:
+    file: ../scripts/map-state.js
+    env: { ACTION: check, NAME: "z${ZOOM}-up", BASE: "z${ZOOM}-left", EXPECT: pan }

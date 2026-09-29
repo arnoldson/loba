@@ -1,0 +1,20 @@
+# Marker stability with the dev sector outline on (#95): the same checks as
+# marker-stability-equator.yaml, but every update now changes outline polygons
+# alongside the markers -- the mix of map-child updates that crashed
+# react-native-maps 1.20 (it mis-ordered the map's children under the new
+# architecture's legacy interop). See subflows/marker-stability.yaml.
+#
+# Open water in the Yellow Sea, at Seoul's latitude (see create-post.yaml).
+#
+# Touches real data: the seeded posts are removed by cleanup-posts.js via
+# onFlowComplete.
+appId: com.arnoldson.loba
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+- runFlow:
+    file: ../subflows/marker-stability.yaml
+    env:
+      CENTER_LAT: "37.2"
+      CENTER_LNG: "126.3"
+      GRID_OUTLINE: "on"

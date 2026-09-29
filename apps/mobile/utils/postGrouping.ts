@@ -116,31 +116,3 @@ export class DensityCache {
     return this.currentGroupingFactor
   }
 }
-
-/**
- * Order `next` for rendering as map markers: sectors already on screen keep
- * their previous relative order, and new ones go at the end.
- *
- * Works around React Native 0.81's legacy view interop, which
- * react-native-maps 1.20 goes through under the new architecture: when one
- * update both inserts mid-list and appends, it applies the append first,
- * so the native marker array drifts out of order from React's. Its
- * removals are by index, so from then on the wrong markers get removed
- * (ghost and missing markers) until an insert lands past the end of the
- * array and the app crashes (NSRangeException in
- * -[AIRMap insertReactSubview:atIndex:]). The density endpoint returns
- * sectors in arbitrary order, so without this nearly every update mixes
- * the two. With it, an update only ever removes markers and appends new
- * ones. Found by the marker-stability E2E flows (#93).
- */
-export function keepMarkerOrder(
-  prev: DensityEntry[],
-  next: DensityEntry[],
-): DensityEntry[] {
-  const nextByKey = new Map(next.map((s) => [s.key, s]))
-  const kept = prev
-    .filter((s) => nextByKey.has(s.key))
-    .map((s) => nextByKey.get(s.key)!)
-  const prevKeys = new Set(prev.map((s) => s.key))
-  return [...kept, ...next.filter((s) => !prevKeys.has(s.key))]
-}

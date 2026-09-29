@@ -67,8 +67,8 @@ const CITY_CAP_GROUPING_FACTOR = 8192
  * locally, not after a network round trip.
  *
  * Going further out than this lock is out of scope for the app
- * entirely right now (a viewport at that scale puts far more cells in
- * view than MAX_MARKERS budgets for) -- see the follow-up issue on
+ * entirely right now (a viewport at that scale puts far more markers in
+ * view than the map can render smoothly) -- see the follow-up issue on
  * metro-scale zoom.
  */
 export function getMaxAllowedLongitudeDelta(viewportWidthPx: number): number {

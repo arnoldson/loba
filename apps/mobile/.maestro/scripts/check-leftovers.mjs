@@ -20,19 +20,25 @@ if (!token) {
 }
 const headers = { Authorization: `Bearer ${token}` }
 
-const { posts = [] } = await (await fetch(`${E2E_API_URL}/api/posts/mine`, { headers })).json()
-const leftovers = posts.filter((p) => p.content.startsWith(PREFIX))
+// /api/posts/mine returns at most 100 posts, so page through by deleting.
+let found = 0
+for (let round = 0; round < 50; round++) {
+  const { posts = [] } = await (await fetch(`${E2E_API_URL}/api/posts/mine`, { headers })).json()
+  const leftovers = posts.filter((p) => p.content.startsWith(PREFIX))
+  if (leftovers.length === 0) break
+  found += leftovers.length
+  for (const post of leftovers) {
+    await fetch(`${E2E_API_URL}/api/posts/${post.id}`, { method: "DELETE", headers })
+  }
+}
 
-if (leftovers.length === 0) {
+if (found === 0) {
   console.log("check-leftovers: no e2e- posts left behind")
   process.exit(0)
 }
 
-for (const post of leftovers) {
-  await fetch(`${E2E_API_URL}/api/posts/${post.id}`, { method: "DELETE", headers })
-}
 console.error(
-  `check-leftovers: FOUND ${leftovers.length} leftover e2e- post(s) (deleted now) -- ` +
+  `check-leftovers: FOUND ${found} leftover e2e- post(s) (deleted now) -- ` +
     "a flow's cleanup did not run or failed; investigate.",
 )
 process.exit(1)

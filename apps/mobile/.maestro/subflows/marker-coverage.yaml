@@ -1,0 +1,59 @@
+# Reusable body of the marker-coverage flows. Seeds posts across and past the
+# whole screen (scripts/seed-grid.js), then at several zoom levels -- from
+# street level out to near the zoom-out lock -- checks after every view change
+# that every seeded post on screen has a marker: no strips, sides or corners
+# of the screen left unrendered (scripts/map-state.js, COVER=1). Each capture
+# also checks cell size (see map-capture.yaml), and pans check the grid holds
+# still.
+#
+# Maestro can't pinch, so zoom levels are set through the E2E-only go-to
+# field (components/E2EMapState.tsx).
+# Parameters (via runFlow's `env:`): CENTER_LAT, CENTER_LNG.
+#
+# The calling flow must register cleanup-posts.js in onFlowComplete.
+appId: com.arnoldson.loba
+---
+# 1.0° is just inside the zoom-out lock on a phone (~1.2° at 402pt wide) and
+# the one densely seeded: every cell on screen gets a post.
+- runScript:
+    file: ../scripts/seed-grid.js
+    env:
+      CENTER_LAT: ${CENTER_LAT}
+      CENTER_LNG: ${CENTER_LNG}
+      SPARSE_ZOOMS: "0.004,0.03,0.2"
+      DENSE_ZOOM: "1.0"
+- setLocation:
+    latitude: ${CENTER_LAT}
+    longitude: ${CENTER_LNG}
+- runFlow:
+    file: login.yaml
+    env:
+      LOGIN_EMAIL: ${E2E_REACTOR_EMAIL}
+      LOGIN_PASSWORD: ${E2E_REACTOR_PASSWORD}
+
+- extendedWaitUntil:
+    notVisible:
+      id: "e2e-map-state"
+      text: "n=0 .*"
+    timeout: 30000
+- extendedWaitUntil:
+    visible: "e2e-pause-never-shown"
+    timeout: 3000
+    optional: true
+- evalScript: ${output.lastN = "-1"}
+- runFlow:
+    file: map-capture.yaml
+    env: { NAME: launch, COVER: "1" }
+
+- runFlow:
+    file: coverage-at-zoom.yaml
+    env: { CENTER_LAT: "${CENTER_LAT}", CENTER_LNG: "${CENTER_LNG}", ZOOM: "1.0" }
+- runFlow:
+    file: coverage-at-zoom.yaml
+    env: { CENTER_LAT: "${CENTER_LAT}", CENTER_LNG: "${CENTER_LNG}", ZOOM: "0.2" }
+- runFlow:
+    file: coverage-at-zoom.yaml
+    env: { CENTER_LAT: "${CENTER_LAT}", CENTER_LNG: "${CENTER_LNG}", ZOOM: "0.03" }
+- runFlow:
+    file: coverage-at-zoom.yaml
+    env: { CENTER_LAT: "${CENTER_LAT}", CENTER_LNG: "${CENTER_LNG}", ZOOM: "0.004" }
