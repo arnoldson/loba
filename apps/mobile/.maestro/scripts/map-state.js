@@ -6,6 +6,10 @@
 //   Parses the readout, stores it as output[NAME], and checks that cell size
 //   depends only on zoom: every sector is a square exactly 3·g Web Mercator
 //   meters on a side, and g is what the zoom alone calls for.
+//   With COVER=1, also checks nothing on screen is left without markers:
+//   every post seeded by seed-grid.js (output.gridPosts) that's on screen --
+//   per the map's real bounds, not the region fetched -- falls inside a
+//   rendered sector. Catches strips or edges of the screen going unrendered.
 // ACTION=check NAME=<new> BASE=<old> EXPECT=pan|zoom-in|same
 //   Checks the two snapshots describe one world-anchored grid -- at the same
 //   grouping factor, cells are identical (same bounds, same posts, same
@@ -103,13 +107,51 @@ function capture() {
     }
   })
 
+  const covered = typeof COVER !== "undefined" && COVER === "1" ? checkCoverage(snap) : ""
+
   const cellPx = cell / ((lngDelta * METERS_PER_DEGREE) / snap.w)
   console.log("map-state " + NAME + ": n=" + snap.n + " g=" + snap.g + " cell=" +
     cellPx.toFixed(1) + "px sectors=" + snap.sectors.length +
-    " center=" + snap.r[0].toFixed(6) + "," + snap.r[1].toFixed(6))
+    " center=" + snap.r[0].toFixed(6) + "," + snap.r[1].toFixed(6) + covered)
 
   output[NAME] = maestro.copiedText
   output.lastN = String(snap.n)
+}
+
+function checkCoverage(snap) {
+  if (!snap.b) fail("the readout has no screen bounds")
+  const posts = JSON.parse(output.gridPosts)
+  const swLat = snap.b[0], swLng = snap.b[1], neLat = snap.b[2], neLng = snap.b[3]
+  // A 1% inset, so a post exactly on the screen's edge doesn't count.
+  const insetLat = (neLat - swLat) * 0.01
+  const insetLng = (neLng - swLng) * 0.01
+  const eps = 1e-9
+
+  let onScreen = 0
+  const missing = []
+  posts.forEach(function (p) {
+    const lat = p[0], lng = p[1]
+    if (lat < swLat + insetLat || lat > neLat - insetLat ||
+        lng < swLng + insetLng || lng > neLng - insetLng) return
+    onScreen++
+    const inSector = snap.sectors.some(function (s) {
+      return lat >= s.minLat - eps && lat < s.maxLat + eps &&
+        lng >= s.minLng - eps && lng < s.maxLng + eps
+    })
+    if (!inSector) {
+      // Where on screen, as fractions from the left and from the bottom,
+      // so a missing strip or edge is obvious from the message.
+      missing.push("(" + ((lng - swLng) / (neLng - swLng)).toFixed(2) + ", " +
+        ((mercY(lat) - mercY(swLat)) / (mercY(neLat) - mercY(swLat))).toFixed(2) + ")")
+    }
+  })
+  if (onScreen < 5) fail("only " + onScreen + " seeded post(s) on screen -- the check needs more to mean anything")
+  if (missing.length > 0) {
+    fail(missing.length + " of " + onScreen + " on-screen posts have no marker (" +
+      snap.sectors.length + " markers shown). Unrendered at (x, y) screen fractions: " +
+      missing.slice(0, 20).join(" "))
+  }
+  return " covered=" + onScreen + "/" + onScreen
 }
 
 function check() {

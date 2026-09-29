@@ -18,13 +18,23 @@ if (!token) {
 }
 const auth = { Authorization: "Bearer " + token }
 
-const mine = JSON.parse(http.get(E2E_API_URL + "/api/posts/mine", { headers: auth }).body)
-const leftovers = (mine.posts || []).filter((p) => p.content.indexOf(TEST_POST_PREFIX) === 0)
-
+// /api/posts/mine returns at most 100 posts, and the coverage flows seed
+// several hundred, so keep going until none are left.
+let deleted = 0
 let failed = 0
-for (const post of leftovers) {
-  const res = http.delete(E2E_API_URL + "/api/posts/" + post.id, { headers: auth })
-  if (!res.ok) failed++
+for (let round = 0; round < 50; round++) {
+  const mine = JSON.parse(http.get(E2E_API_URL + "/api/posts/mine", { headers: auth }).body)
+  const leftovers = (mine.posts || []).filter((p) => p.content.indexOf(TEST_POST_PREFIX) === 0)
+  if (leftovers.length === 0) break
+  let roundFailed = 0
+  for (const post of leftovers) {
+    const res = http.delete(E2E_API_URL + "/api/posts/" + post.id, { headers: auth })
+    if (res.ok) deleted++
+    else roundFailed++
+  }
+  failed += roundFailed
+  // Nothing got deleted this round -- retrying would loop on the same posts.
+  if (roundFailed === leftovers.length) break
 }
-console.log("cleanup: deleted " + (leftovers.length - failed) + "/" + leftovers.length + " e2e post(s)")
+console.log("cleanup: deleted " + deleted + " e2e post(s)")
 if (failed > 0) throw new Error("cleanup: failed to delete " + failed + " post(s)")

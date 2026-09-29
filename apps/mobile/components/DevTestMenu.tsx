@@ -262,6 +262,7 @@ export function DevTestMenu({
           <Text style={styles.crashButtonText}>💣</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          testID="grid-outline-toggle"
           style={[
             styles.crashButton,
             showGridOutline && styles.gridButtonActive,

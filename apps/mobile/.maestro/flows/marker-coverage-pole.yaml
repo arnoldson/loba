@@ -1,0 +1,15 @@
+# Marker coverage at 80°N, open Arctic Ocean north of Alaska -- where a degree of longitude is under a fifth of its equatorial width: at every zoom level from street level out to
+# near the zoom-out lock, every seeded post on screen has a marker -- no
+# strips, sides or corners left unrendered. See subflows/marker-coverage.yaml.
+#
+# Touches real data: several hundred seeded posts, removed by cleanup-posts.js
+# via onFlowComplete.
+appId: com.arnoldson.loba
+onFlowComplete:
+  - runScript: ../scripts/cleanup-posts.js
+---
+- runFlow:
+    file: ../subflows/marker-coverage.yaml
+    env:
+      CENTER_LAT: "80.0"
+      CENTER_LNG: "-150.0"

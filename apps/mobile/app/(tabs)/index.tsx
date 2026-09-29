@@ -21,7 +21,6 @@ import { TagFilterBar, type PopularTag } from "@/components/TagFilterBar"
 import { getZoomLevel, getMaxAllowedLongitudeDelta } from "@/utils/tiles"
 import {
   DensityCache,
-  keepMarkerOrder,
   type DensityEntry,
   type Bounds,
 } from "@/utils/postGrouping"
@@ -98,6 +97,7 @@ export default function HomeScreen() {
   const [e2eFetch, setE2eFetch] = useState<E2EFetch>({
     n: 0,
     region: null,
+    screen: null,
     groupingFactor: 0,
     viewportWidthPx,
   })
@@ -249,14 +249,17 @@ export default function HomeScreen() {
           }
           densityCache.addDensity(sectors, groupingFactor)
 
-          // Previous markers keep their order, new ones are appended --
-          // see keepMarkerOrder for the native crash this avoids.
-          const visible = densityCache.getVisible(visibleKeys)
-          setVisibleSupertiles((prev) => keepMarkerOrder(prev, visible))
+          setVisibleSupertiles(densityCache.getVisible(visibleKeys))
           if (IS_E2E) {
+            // What's really on screen, so flows can check no part of it
+            // is left without markers.
+            const screen =
+              (await mapRef.current?.getMapBoundaries().catch(() => null)) ??
+              null
             setE2eFetch((prev) => ({
               n: prev.n + 1,
               region,
+              screen,
               groupingFactor,
               viewportWidthPx,
             }))
@@ -389,7 +392,7 @@ export default function HomeScreen() {
       // groupingFactor is frozen at CITY_CAP_GROUPING_FACTOR and the
       // sector grid stops changing regardless of further zoom-out --
       // but the *viewport* would keep growing, eventually putting far
-      // more cells in view than MAX_MARKERS budgets for. Rather than let
+      // more markers in view than the map can render smoothly. Rather than let
       // that happen, snap back to the max allowed delta and let the
       // snap's own onRegionChangeComplete (recursing into this function
       // with an in-bounds region) do the actual fetch.
@@ -567,7 +570,8 @@ export default function HomeScreen() {
   // unlike the old grid overlay which also drew empty cells).
   const gridOutlineCells = useMemo(() => {
     if (!__DEV__ || !showGridOutline) return []
-    // Safety cap, matching MAX_MARKERS's spirit.
+    // Safety cap -- well above the most sectors the zoom-out lock allows
+    // on screen, so it never kicks in for a real view.
     if (visibleSupertiles.length > 500) {
       console.warn(
         `⚠️  Sector outline skipped -- ${visibleSupertiles.length} sectors is too many to render`,
@@ -577,17 +581,13 @@ export default function HomeScreen() {
     return visibleSupertiles.map((s) => ({ key: s.key, bounds: s.bounds }))
   }, [showGridOutline, visibleSupertiles])
 
-  const supertiles = useMemo(() => {
-    // Apply marker limit to prevent native crashes
-    const MAX_MARKERS = 150
-    if (visibleSupertiles.length > MAX_MARKERS) {
-      console.warn(
-        `⚠️  Too many markers (${visibleSupertiles.length}), limiting to ${MAX_MARKERS}`,
-      )
-      return visibleSupertiles.slice(0, MAX_MARKERS)
-    }
-    return visibleSupertiles
-  }, [visibleSupertiles])
+  // Every visible sector gets a marker. There used to be a 150-marker cap
+  // (a guard against react-native-maps 1.20's crash, fixed in #95), but it
+  // silently dropped sectors past 150 -- and since they arrive row by row,
+  // that left a whole edge of the screen without markers when zoomed out
+  // over a busy area. The count is bounded anyway: markers are >= 36px
+  // apart and the zoom-out lock caps the view (a few hundred on a phone).
+  const supertiles = visibleSupertiles
 
   // Briefly re-enable tracksViewChanges whenever the set of markers changes,
   // so newly-mounted custom marker views get a chance to render before their
@@ -630,8 +630,6 @@ export default function HomeScreen() {
           onRegionChange={handleRegionChange}
           onRegionChangeComplete={handleRegionChangeComplete}
         >
-          {/* First, so marker updates only ever append after it -- see
-              keepMarkerOrder. */}
           {location && (
             <Marker
               coordinate={{
@@ -649,19 +647,22 @@ export default function HomeScreen() {
           {supertiles.map((tile) => (
             <Marker
               key={tile.key}
-              testID="tile-marker"
               coordinate={tile.center}
               onPress={() => handleTilePress(tile)}
               tracksViewChanges={!markersReady}
               zIndex={1}
             >
-              <TileMarker count={tile.count} groupingFactor={groupingFactor} />
+              {/* testID on the content, not the Marker: react-native-maps'
+                  Fabric Marker doesn't pass its testID on to the native
+                  annotation view, so Maestro couldn't find it (#95). */}
+              <TileMarker
+                count={tile.count}
+                groupingFactor={groupingFactor}
+                testID="tile-marker"
+              />
             </Marker>
           ))}
 
-          {/* Dev only: while the outline is on, marker updates insert
-              mid-list again, so it can still hit keepMarkerOrder's native
-              bug (fixed properly by moving off react-native-maps 1.20). */}
           {__DEV__ &&
             showGridOutline &&
             gridOutlineCells.map(({ key, bounds }) => (
@@ -683,7 +684,13 @@ export default function HomeScreen() {
         </MapView>
       </ErrorBoundary>
 
-      {IS_E2E && <E2EMapState fetch={e2eFetch} sectors={supertiles} />}
+      {IS_E2E && (
+        <E2EMapState
+          fetch={e2eFetch}
+          sectors={supertiles}
+          onGoTo={(region) => mapRef.current?.animateToRegion(region, 300)}
+        />
+      )}
 
       {__DEV__ && (
         <ErrorBoundary label="Dev test menu">

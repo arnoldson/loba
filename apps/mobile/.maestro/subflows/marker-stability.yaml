@@ -6,7 +6,9 @@
 #   - zoom steps nest (each small cell inside exactly one big one),
 #   - cell size depends only on zoom (checked on every capture, and after a
 #     round trip back to the starting view the grid is exactly as before).
-# Parameters (via runFlow's `env:`): CENTER_LAT, CENTER_LNG.
+# Parameters (via runFlow's `env:`): CENTER_LAT, CENTER_LNG, and GRID_OUTLINE
+# ("on" to turn on the dev sector outline, so polygons change alongside the
+# markers on every update -- the case that crashed react-native-maps 1.20, #95).
 #
 # The calling flow must register cleanup-posts.js in onFlowComplete.
 appId: com.arnoldson.loba
@@ -24,6 +26,12 @@ appId: com.arnoldson.loba
     env:
       LOGIN_EMAIL: ${E2E_REACTOR_EMAIL}
       LOGIN_PASSWORD: ${E2E_REACTOR_PASSWORD}
+- runFlow:
+    when:
+      true: ${GRID_OUTLINE == "on"}
+    commands:
+      - tapOn:
+          id: "grid-outline-toggle"
 
 # Starting view. The screen can fetch twice on launch (initial region, then
 # the camera move to the device location), so let that settle before
