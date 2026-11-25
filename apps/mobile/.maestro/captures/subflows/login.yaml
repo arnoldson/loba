@@ -1,0 +1,38 @@
+# Log in on any commit -- old commits have no testIDs, so this only uses
+# text every version of the login screen shows. Parameters: LOGIN_EMAIL,
+# LOGIN_PASSWORD. Ends on the map screen.
+appId: com.arnoldson.loba
+---
+- launchApp:
+    clearState: true
+- openLink: "com.arnoldson.loba://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
+- extendedWaitUntil:
+    visible: "Allow While Using App"
+    timeout: 90000
+    optional: true
+- runFlow:
+    when:
+      visible: "Allow While Using App"
+    commands:
+      - tapOn: "Allow While Using App"
+- extendedWaitUntil:
+    visible: "Log In"
+    timeout: 90000
+- tapOn: "Email"
+- inputText: ${LOGIN_EMAIL}
+- tapOn: "Password"
+- inputText: ${LOGIN_PASSWORD}
+- tapOn: "Log In"
+- extendedWaitUntil:
+    visible: "Not Now"
+    timeout: 10000
+    optional: true
+- runFlow:
+    when:
+      visible: "Not Now"
+    commands:
+      - tapOn: "Not Now"
+# The recenter button is on the map screen at every commit.
+- extendedWaitUntil:
+    visible: "⦿"
+    timeout: 30000

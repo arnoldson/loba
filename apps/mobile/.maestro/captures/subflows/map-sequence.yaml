@@ -1,0 +1,47 @@
+# The capture sequence, identical at every commit: dev grid outline on,
+# launch view, three small pans (screen-recorded -- the #93 jump), a
+# double-tap zoom in, then recenter. Screenshots are ${PLACE}-NN-*.png in the
+# run's --test-output-dir (capture.sh sets it). Parameters: CENTER_LAT,
+# CENTER_LNG, PLACE.
+#
+# Pre-#95 commits (react-native-maps 1.20) can crash mid-sequence; every
+# screenshot taken before that is kept.
+appId: com.arnoldson.loba
+---
+- setLocation:
+    latitude: ${CENTER_LAT}
+    longitude: ${CENTER_LNG}
+- runFlow:
+    file: login.yaml
+    env:
+      LOGIN_EMAIL: ${CAPTURE_EMAIL}
+      LOGIN_PASSWORD: ${CAPTURE_PASSWORD}
+
+- tapOn: "▦"
+- runFlow: { file: pause.yaml, env: { PAUSE_MS: "4000" } }
+- takeScreenshot: ${PLACE}-01-launch
+
+# Slow drags (no fling); fetches are throttled to one a second. Horizontal
+# drags need ~35% of the width -- MapKit ignored a 15% (~60pt) one.
+- startRecording: ${PLACE}-pans
+- runFlow: { file: pause.yaml, env: { PAUSE_MS: "1500" } }
+- swipe: { start: "70%, 55%", end: "35%, 55%", duration: 1000 }
+- runFlow: { file: pause.yaml, env: { PAUSE_MS: "2500" } }
+- takeScreenshot: ${PLACE}-02-pan-left
+- swipe: { start: "50%, 60%", end: "50%, 48%", duration: 1000 }
+- runFlow: { file: pause.yaml, env: { PAUSE_MS: "2500" } }
+- takeScreenshot: ${PLACE}-03-pan-up
+- swipe: { start: "35%, 48%", end: "70%, 60%", duration: 1000 }
+- runFlow: { file: pause.yaml, env: { PAUSE_MS: "2500" } }
+- takeScreenshot: ${PLACE}-04-pan-back
+- stopRecording
+
+# Left of the seeded spread, so it can't land on a marker.
+- doubleTapOn:
+    point: 12%, 50%
+- runFlow: { file: pause.yaml, env: { PAUSE_MS: "3000" } }
+- takeScreenshot: ${PLACE}-05-zoom-in
+
+- tapOn: "⦿"
+- runFlow: { file: pause.yaml, env: { PAUSE_MS: "3000" } }
+- takeScreenshot: ${PLACE}-06-recenter

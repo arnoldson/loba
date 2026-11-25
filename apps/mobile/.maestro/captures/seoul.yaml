@@ -1,0 +1,10 @@
+# Map capture at Seoul (37.5°N), where pre-#63 cells were visibly non-square.
+# Run through scripts/local-env/capture.sh, which sets the output folder and the account.
+appId: com.arnoldson.loba
+---
+- runFlow:
+    file: subflows/map-sequence.yaml
+    env:
+      CENTER_LAT: "37.5665"
+      CENTER_LNG: "126.978"
+      PLACE: seoul

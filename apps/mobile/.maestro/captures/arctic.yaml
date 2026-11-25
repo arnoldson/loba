@@ -1,0 +1,10 @@
+# Map capture at 80°N, where a degree of longitude is under a fifth of its equatorial width.
+# Run through scripts/local-env/capture.sh, which sets the output folder and the account.
+appId: com.arnoldson.loba
+---
+- runFlow:
+    file: subflows/map-sequence.yaml
+    env:
+      CENTER_LAT: "80.0"
+      CENTER_LNG: "-150.0"
+      PLACE: arctic
