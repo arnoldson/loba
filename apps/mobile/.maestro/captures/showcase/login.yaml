@@ -1,0 +1,14 @@
+# Showcase captures: log in as the local viewer and land on the map, with the
+# simulated location just north of Seoul City Hall (see seed-showcase.sh).
+appId: com.arnoldson.loba
+---
+- setLocation:
+    latitude: 37.5678
+    longitude: 126.9781
+- runFlow:
+    file: ../subflows/login.yaml
+    env:
+      LOGIN_EMAIL: capture-viewer@loba.local
+      LOGIN_PASSWORD: local-capture-pass
+- tapOn: "⦿"
+- waitForAnimationToEnd

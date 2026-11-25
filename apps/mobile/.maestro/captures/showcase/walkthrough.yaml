@@ -1,0 +1,41 @@
+# Showcase walkthrough (run after login.yaml, Metro started with
+# EXPO_PUBLIC_CAPTURE_DELTA=0.03): nearby sector -> feed -> post + comments
+# -> back to the map -> another sector -> new post, which then appears as a
+# marker at the user's location. Recorded with `xcrun simctl io <udid> recordVideo`.
+appId: com.arnoldson.loba
+---
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 2500 } }
+# Nearby sector (City Hall), just below the location dot.
+- tapOn: { point: "50%,52%" }
+- extendedWaitUntil: { visible: "6 posts in this area", timeout: 10000 }
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 2500 } }
+- swipe: { start: "50%,80%", end: "50%,45%", duration: 900 }
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 2000 } }
+- swipe: { start: "50%,45%", end: "50%,80%", duration: 900 }
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 1200 } }
+- tapOn: "Free outdoor yoga.*"
+- extendedWaitUntil: { visible: "3 comments", timeout: 10000 }
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 3500 } }
+- tapOn: "‹"
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 1000 } }
+- tapOn: "✕"
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 1500 } }
+# Myeongdong sector, to the east.
+- tapOn: { point: "74%,57%" }
+- extendedWaitUntil: { visible: ".*posts in this area", timeout: 10000 }
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 3000 } }
+- tapOn: "✕"
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 1500 } }
+# New post.
+- tapOn: { point: "87%,83%" }
+- tapOn: "What's happening here? Use #tags inline"
+- inputText: "Live jazz trio by the Cheonggyecheon steps right now, worth the detour #music"
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 1500 } }
+- tapOn: "Post"
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 2500 } }
+- tapOn: "OK"
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 2500 } }
+# It shows up right away as a new marker at the user's location.
+- tapOn: { point: "50%,45%" } # top of the marker; the location dot covers its lower half
+- extendedWaitUntil: { visible: "Live jazz trio.*", timeout: 10000 }
+- runFlow: { file: ../subflows/pause.yaml, env: { PAUSE_MS: 3500 } }

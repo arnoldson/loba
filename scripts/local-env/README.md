@@ -25,6 +25,16 @@ for any commit back to 726dd22.
   `capture-viewer@loba.local`, password `local-capture-pass`). Re-runnable.
 - **`seed.mjs`** -- posts a fixed spread plus a 40m lattice around Seoul (37.5665, 126.978) and 80°N
   (80.0, -150.0), leaving the screen's left edge clear for the flows' zoom double-tap. Run it while a **pre-#63** backend is up, so every post also gets a `tile_id`.
+- **`seed-showcase.sh`** -- realistic posts (text, tags, votes, comments, mixed time-left) on
+  public landmarks around Seoul City Hall, from six anonymous local accounts, for portfolio
+  screenshots. Re-running resets them and removes anything the viewer account posted. Use it
+  instead of `seed.mjs` (`supabase db reset` + `setup.sh` first to clear the lattice). The flows in
+  `apps/mobile/.maestro/captures/showcase/` (`login.yaml`, then `walkthrough.yaml` while
+  `xcrun simctl io <udid> recordVideo` runs) drive the main worktree with Metro started as
+  `EXPO_PUBLIC_CAPTURE=1 EXPO_PUBLIC_CAPTURE_DELTA=0.03 npx expo start --dev-client`. That needs two
+  more worktree-only edits in main's `app/(tabs)/index.tsx`: the dev menu is hidden when
+  `EXPO_PUBLIC_CAPTURE=1`, and `INITIAL_LAT_DELTA` reads `EXPO_PUBLIC_CAPTURE_DELTA` (a zoomed-out
+  start, since Maestro can't pinch).
 - **`capture.sh <commit> <simulator-udid> [flow ...]`** -- starts that worktree's backend (:3000)
   and Metro (:8081), runs `apps/mobile/.maestro/captures/<flow>.yaml` (default: `seoul arctic`), and
   saves screenshots plus a pan recording to `../loba-captures/output/<commit>/<timestamp>/`.
